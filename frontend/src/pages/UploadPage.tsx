@@ -2,7 +2,6 @@ import { useState } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import SelectField from '../components/SelectField.tsx'
 import {
-  AUDIO_BITRATES,
   AUDIO_CODECS,
   BRIGHTNESS_LEVELS,
   DEFAULT_PRESET,
@@ -199,13 +198,6 @@ function UploadPage() {
             value={settings.audioCodec}
             options={AUDIO_CODECS}
             onChange={(value) => updateSetting('audioCodec', value)}
-          />
-          <SelectField
-            id="audio-bitrate"
-            label="Audio bitrate"
-            value={settings.audioBitrate}
-            options={AUDIO_BITRATES}
-            onChange={(value) => updateSetting('audioBitrate', value)}
           />
         </fieldset>
 

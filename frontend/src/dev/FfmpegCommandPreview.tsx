@@ -16,13 +16,10 @@ const RESOLUTION_HEIGHTS: Record<TranscodeSettings['resolution'], string> = {
 
 const VIDEO_ENCODERS: Record<TranscodeSettings['videoCodec'], string> = {
   h264: 'libx264',
-  h265: 'libx265',
 }
 
 const AUDIO_ENCODERS: Record<TranscodeSettings['audioCodec'], string> = {
-  aac: 'aac',
   mp3: 'libmp3lame',
-  opus: 'libopus',
 }
 
 // Each inner array is one flag and its value, printed on its own line.
@@ -44,7 +41,6 @@ function buildArgGroups(settings: TranscodeSettings, inputName: string) {
     ['-preset', settings.encodingSpeed],
     ['-crf', settings.quality],
     ['-c:a', AUDIO_ENCODERS[settings.audioCodec]],
-    ['-b:a', settings.audioBitrate],
     [`output_${settings.resolution}.mp4`],
   )
   return groups

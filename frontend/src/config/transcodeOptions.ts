@@ -20,9 +20,9 @@ export const FRAME_RATES = [
   { value: '60', label: '60 fps' },
 ] as const satisfies readonly Option<string>[]
 
+// Only H.264 is supported for now.
 export const VIDEO_CODECS = [
-  { value: 'h264', label: 'H.264 (most compatible)' },
-  { value: 'h265', label: 'H.265 / HEVC (smaller files, slower)' },
+  { value: 'h264', label: 'H.264' },
 ] as const satisfies readonly Option<string>[]
 
 // FFmpeg -preset: slower presets compress better but take more compute.
@@ -56,17 +56,9 @@ export const BRIGHTNESS_LEVELS = [
   { value: '0.2', label: 'Much brighter' },
 ] as const satisfies readonly Option<string>[]
 
+// Only MP3 is supported for now. Audio bitrate is chosen on the AWS side.
 export const AUDIO_CODECS = [
-  { value: 'aac', label: 'AAC (standard for MP4)' },
   { value: 'mp3', label: 'MP3' },
-  { value: 'opus', label: 'Opus (efficient, less compatible)' },
-] as const satisfies readonly Option<string>[]
-
-export const AUDIO_BITRATES = [
-  { value: '96k', label: '96 kbps' },
-  { value: '128k', label: '128 kbps' },
-  { value: '192k', label: '192 kbps' },
-  { value: '256k', label: '256 kbps' },
 ] as const satisfies readonly Option<string>[]
 
 type ValueOf<T extends readonly Option<string>[]> = T[number]['value']
@@ -79,7 +71,6 @@ export type TranscodeSettings = {
   quality: ValueOf<typeof QUALITY_LEVELS>
   brightness: ValueOf<typeof BRIGHTNESS_LEVELS>
   audioCodec: ValueOf<typeof AUDIO_CODECS>
-  audioBitrate: ValueOf<typeof AUDIO_BITRATES>
 }
 
 export const QUALITY_PRESETS = {
@@ -90,8 +81,7 @@ export const QUALITY_PRESETS = {
     encodingSpeed: 'veryfast',
     quality: '28',
     brightness: '0',
-    audioCodec: 'aac',
-    audioBitrate: '96k',
+    audioCodec: 'mp3',
   },
   medium: {
     resolution: '720p',
@@ -100,8 +90,7 @@ export const QUALITY_PRESETS = {
     encodingSpeed: 'medium',
     quality: '23',
     brightness: '0',
-    audioCodec: 'aac',
-    audioBitrate: '128k',
+    audioCodec: 'mp3',
   },
   high: {
     resolution: '1080p',
@@ -110,8 +99,7 @@ export const QUALITY_PRESETS = {
     encodingSpeed: 'slow',
     quality: '20',
     brightness: '0',
-    audioCodec: 'aac',
-    audioBitrate: '192k',
+    audioCodec: 'mp3',
   },
 } as const satisfies Record<string, TranscodeSettings>
 
