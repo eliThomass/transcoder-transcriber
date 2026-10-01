@@ -1,0 +1,95 @@
+.auth-dialog {
+  --field-bg: #ffffff;
+
+  width: min(26rem, calc(100% - 2rem));
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  color: var(--graphite);
+  animation: dialog-in 160ms ease-out;
+}
+
+.auth-dialog::backdrop {
+  background: rgb(29 35 41 / 0.55);
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-dialog {
+    animation: none;
+  }
+}
+
+.auth-dialog__form {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1.75rem;
+}
+
+.auth-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.auth-dialog__title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  font-stretch: 120%;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+.auth-dialog__close {
+  display: flex;
+  margin: -0.25rem -0.375rem 0 0;
+  padding: 0.375rem;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--slate);
+  cursor: pointer;
+}
+
+.auth-dialog__close:hover {
+  background: var(--paper);
+  color: var(--graphite);
+}
+
+.auth-dialog__submit {
+  width: 100%;
+  padding-block: 0.75rem;
+}
+
+.auth-dialog__switch {
+  font-size: 0.875rem;
+  color: var(--slate);
+  text-align: center;
+}
+
+.auth-dialog__switch-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 620;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.auth-dialog__dev-note {
+  padding: 0.625rem 0.75rem;
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius-s);
+  font-size: 0.8125rem;
+  color: var(--slate);
+}

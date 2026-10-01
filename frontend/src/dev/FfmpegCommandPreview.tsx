@@ -7,6 +7,7 @@
 
 import { useState } from 'react'
 import type { TranscodeSettings } from '../config/transcodeOptions.ts'
+import './FfmpegCommandPreview.css'
 
 const RESOLUTION_HEIGHTS: Record<TranscodeSettings['resolution'], string> = {
   '1080p': '1080',
