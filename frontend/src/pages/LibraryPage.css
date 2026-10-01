@@ -1,0 +1,149 @@
+/* Empty and logged-out states */
+
+.library-empty {
+  display: grid;
+  justify-items: start;
+  gap: 0.75rem;
+  max-width: 30rem;
+  padding-top: 1.75rem;
+  border-top: 1px solid var(--rule);
+}
+
+.library-empty__title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-stretch: 112%;
+}
+
+.library-empty__text {
+  margin-bottom: 0.5rem;
+  color: var(--slate);
+}
+
+/* Loading, error and download messages */
+
+.library-page__message {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1.25rem;
+  font-size: 0.9375rem;
+  color: var(--slate);
+}
+
+.library-page__message--error {
+  color: var(--danger);
+}
+
+/* Video list */
+
+.library-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--rule);
+}
+
+.library-item {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1.25rem;
+  padding-block: 1.25rem;
+  border-bottom: 1px solid var(--rule);
+}
+
+/* A small monitor with a strip of color bars, matching the Encode page. */
+.library-item__thumb {
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-s);
+  background:
+    linear-gradient(
+        90deg,
+        #c0c0c0 0 14.28%,
+        #c4bd2c 0 28.57%,
+        #2cb8bf 0 42.85%,
+        #35ad4b 0 57.14%,
+        #b33fb5 0 71.42%,
+        #c23a33 0 85.71%,
+        #3245bd 0
+      )
+      bottom / 100% 14% no-repeat,
+    var(--graphite);
+}
+
+.library-item--failed .library-item__thumb {
+  filter: grayscale(1);
+  opacity: 0.55;
+}
+
+.library-item__name {
+  font-weight: 650;
+  font-stretch: 105%;
+  overflow-wrap: anywhere;
+}
+
+.library-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 1rem;
+  margin-top: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--slate);
+}
+
+.library-item__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.library-item__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 560;
+  white-space: nowrap;
+}
+
+/* A tally light that pulses while the worker is encoding. */
+.library-item__status--processing::before {
+  content: '';
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tally 1.6s ease-in-out infinite;
+}
+
+.library-item__status--failed {
+  color: var(--danger);
+}
+
+@keyframes tally {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .library-item__status--processing::before {
+    animation: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .library-item {
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0.75rem 1rem;
+  }
+
+  .library-item__actions,
+  .library-item__status {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+}

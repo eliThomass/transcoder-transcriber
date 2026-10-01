@@ -1,0 +1,120 @@
+.top-bar {
+  background: var(--graphite);
+  color: var(--surface);
+}
+
+/* The accent blue is too dark to see on graphite. */
+.top-bar :focus-visible {
+  outline-color: #8ea2ff;
+}
+
+.top-bar__inner {
+  display: flex;
+  align-items: center;
+  gap: clamp(1rem, 3vw, 2.5rem);
+  max-width: 70rem;
+  min-height: 3.75rem;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 2.5rem);
+}
+
+.top-bar__brand {
+  font-size: 1rem;
+  font-weight: 800;
+  font-stretch: 125%;
+  letter-spacing: -0.01em;
+  color: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.top-bar__nav {
+  display: flex;
+  align-self: stretch;
+  gap: 0.25rem;
+}
+
+.top-bar__tab {
+  display: flex;
+  align-items: center;
+  padding: 0 0.75rem;
+  font-size: 0.9375rem;
+  font-weight: 560;
+  color: #a9b3bc;
+  text-decoration: none;
+  box-shadow: inset 0 -2px 0 transparent;
+  transition:
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.top-bar__tab:hover {
+  color: var(--surface);
+}
+
+.top-bar__tab[aria-current='page'] {
+  color: var(--surface);
+  box-shadow: inset 0 -2px 0 var(--surface);
+}
+
+.top-bar__account {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.top-bar__user {
+  max-width: 16rem;
+  overflow: hidden;
+  font-size: 0.875rem;
+  color: #a9b3bc;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.top-bar__button {
+  padding: 0.5rem 0.875rem;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.top-bar__button:hover {
+  background: var(--graphite-soft);
+}
+
+.top-bar__button--primary {
+  background: var(--surface);
+  color: var(--graphite);
+}
+
+.top-bar__button--primary:hover {
+  background: #ffffff;
+}
+
+/* Small screens: brand and account on the first row, tabs below. */
+@media (max-width: 640px) {
+  .top-bar__inner {
+    flex-wrap: wrap;
+    row-gap: 0;
+    padding-top: 0.625rem;
+  }
+
+  .top-bar__nav {
+    order: 3;
+    width: 100%;
+    min-height: 2.75rem;
+    margin-left: -0.75rem;
+  }
+
+  .top-bar__user {
+    display: none;
+  }
+}

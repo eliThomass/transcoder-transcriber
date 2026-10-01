@@ -1,0 +1,219 @@
+:root {
+  /* Palette: a calibration grey card, graphite ink, one broadcast blue. */
+  --paper: #e3e6e8;
+  --paper-light: #eef0f1;
+  --surface: #f6f7f8;
+  --graphite: #1d2329;
+  --graphite-soft: #313a43;
+  --slate: #56616b;
+  --rule: #c3cad0;
+  --accent: #2a49c9;
+  --danger: #b3261e;
+
+  --font-sans: 'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  --radius-s: 4px;
+  --radius-m: 8px;
+
+  color-scheme: light;
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  color: var(--graphite);
+  background-color: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  /* A soft pool of light from the top left, like a lit desk. */
+  background:
+    radial-gradient(120% 70% at 10% 0%, var(--paper-light) 0%, transparent 60%),
+    var(--paper);
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Page layout shared by every tab */
+
+.page {
+  max-width: 70rem;
+  margin: 0 auto;
+  padding: clamp(2rem, 6vw, 4.5rem) clamp(1rem, 4vw, 2.5rem) 4rem;
+}
+
+.page__header {
+  max-width: 44rem;
+  margin-bottom: clamp(2rem, 5vw, 3.5rem);
+}
+
+.page__title {
+  font-size: clamp(2.25rem, 1.25rem + 4vw, 4.25rem);
+  font-weight: 800;
+  font-stretch: 125%;
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+}
+
+.page__description {
+  max-width: 34rem;
+  margin-top: 1rem;
+  font-size: 1.0625rem;
+  color: var(--slate);
+}
+
+/* Buttons */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.625rem 1rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  font-size: 0.9375rem;
+  font-weight: 620;
+  font-stretch: 102%;
+  line-height: 1.2;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.button:disabled {
+  cursor: not-allowed;
+}
+
+.button--primary {
+  background: var(--graphite);
+  color: var(--surface);
+}
+
+.button--primary:hover:not(:disabled) {
+  background: var(--graphite-soft);
+}
+
+.button--primary:disabled {
+  background: var(--rule);
+  color: var(--slate);
+}
+
+.button--secondary {
+  border-color: var(--rule);
+  background: transparent;
+  color: var(--graphite);
+}
+
+.button--secondary:hover:not(:disabled) {
+  border-color: var(--slate);
+}
+
+.button--small {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+}
+
+/* Form fields (SelectField and the checkbox field) */
+
+.field {
+  display: grid;
+  gap: 0.375rem;
+  align-content: start;
+}
+
+.field__label {
+  font-size: 0.875rem;
+  font-weight: 560;
+  font-stretch: 92%;
+}
+
+.field__select,
+.field__input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background-color: var(--field-bg, var(--surface));
+  font-size: 0.9375rem;
+  transition: border-color 120ms ease;
+}
+
+.field__select:hover,
+.field__input:hover {
+  border-color: var(--slate);
+}
+
+.field__select:focus-visible,
+.field__input:focus-visible {
+  border-color: var(--accent);
+  outline-offset: 1px;
+}
+
+.field__select {
+  appearance: none;
+  padding-right: 2.25rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%2356616b' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 0.7rem;
+  cursor: pointer;
+}
+
+.field__hint {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--slate);
+}
+
+.field__error {
+  font-size: 0.875rem;
+  font-weight: 540;
+  color: var(--danger);
+}
+
+.field--checkbox {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.field--checkbox .field__label {
+  font-size: 0.9375rem;
+  font-weight: 450;
+  font-stretch: 100%;
+  cursor: pointer;
+}
+
+.field__checkbox {
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0;
+  accent-color: var(--graphite);
+  cursor: pointer;
+}
