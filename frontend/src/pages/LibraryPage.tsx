@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import { errorMessage } from '../api/client.ts'
-import type { User } from '../auth/authApi.ts'
-import { fetchLibrary, getDownloadUrl } from '../library/libraryApi.ts'
-import type { DownloadFile, LibraryVideo } from '../library/libraryApi.ts'
+import type { DownloadFile, Job, User } from '../api/types.ts'
+import { getDownloadLink, listJobs } from '../jobs/jobsApi.ts'
 import { formatDate, formatExpiry, formatFileSize } from '../utils/format.ts'
 import './LibraryPage.css'
 
@@ -44,9 +43,10 @@ function LibraryPage({ user, onLogIn }: LibraryPageProps) {
 type LoadState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ready'; videos: LibraryVideo[] }
+  | { status: 'ready'; jobs: Job[] }
 
 const STATUS_LABELS = {
+  queued: 'Queued',
   processing: 'Processing',
   failed: 'Encoding failed',
 } as const
@@ -58,9 +58,9 @@ function LibraryList() {
 
   useEffect(() => {
     let ignore = false
-    fetchLibrary()
-      .then((videos) => {
-        if (!ignore) setState({ status: 'ready', videos })
+    listJobs()
+      .then((jobs) => {
+        if (!ignore) setState({ status: 'ready', jobs })
       })
       .catch((error: unknown) => {
         if (!ignore) setState({ status: 'error', message: errorMessage(error) })
@@ -75,11 +75,11 @@ function LibraryList() {
     setAttempt((previous) => previous + 1)
   }
 
-  function handleDownload(video: LibraryVideo, file: DownloadFile) {
+  function handleDownload(job: Job, file: DownloadFile) {
     setDownloadError(null)
-    getDownloadUrl(video.id, file)
+    getDownloadLink(job.id, file)
       // The presigned URL serves the file as an attachment, so opening it downloads it.
-      .then((url) => window.location.assign(url))
+      .then((link) => window.location.assign(link.url))
       .catch((error: unknown) => setDownloadError(errorMessage(error)))
   }
 
@@ -106,7 +106,7 @@ function LibraryList() {
     )
   }
 
-  if (state.videos.length === 0) {
+  if (state.jobs.length === 0) {
     return (
       <div className="library-empty">
         <h2 className="library-empty__title">No videos yet</h2>
@@ -126,44 +126,47 @@ function LibraryList() {
         </p>
       )}
       <ul className="library-list">
-        {state.videos.map((video) => (
-          <li className={`library-item library-item--${video.status}`} key={video.id}>
+        {state.jobs.map((job) => (
+          <li className={`library-item library-item--${job.status}`} key={job.id}>
             <div className="library-item__thumb" aria-hidden="true" />
             <div className="library-item__info">
-              <p className="library-item__name">{video.fileName}</p>
+              <p className="library-item__name">{job.fileName}</p>
               <p className="library-item__meta">
-                <span>{video.resolution}</span>
-                {video.sizeBytes !== null && (
-                  <span>{formatFileSize(video.sizeBytes)}</span>
+                <span>{job.settings.resolution}</span>
+                {job.outputSizeBytes !== null && (
+                  <span>{formatFileSize(job.outputSizeBytes)}</span>
                 )}
-                <span>Encoded {formatDate(video.createdAt)}</span>
-                <span>{formatExpiry(video.expiresAt)}</span>
+                <span>Encoded {formatDate(job.createdAt)}</span>
+                <span>{formatExpiry(job.expiresAt)}</span>
               </p>
+              {job.status === 'failed' && job.error && (
+                <p className="library-item__error">{job.error}</p>
+              )}
             </div>
-            {video.status === 'ready' ? (
+            {job.status === 'ready' ? (
               <div className="library-item__actions">
                 <button
                   className="button button--secondary button--small"
                   type="button"
-                  aria-label={`Download video: ${video.fileName}`}
-                  onClick={() => handleDownload(video, 'video')}
+                  aria-label={`Download video: ${job.fileName}`}
+                  onClick={() => handleDownload(job, 'video')}
                 >
                   Download video
                 </button>
-                {video.hasTranscript && (
+                {job.hasTranscript && (
                   <button
                     className="button button--secondary button--small"
                     type="button"
-                    aria-label={`Download transcript: ${video.fileName}`}
-                    onClick={() => handleDownload(video, 'transcript')}
+                    aria-label={`Download transcript: ${job.fileName}`}
+                    onClick={() => handleDownload(job, 'transcript')}
                   >
                     Download transcript
                   </button>
                 )}
               </div>
             ) : (
-              <p className={`library-item__status library-item__status--${video.status}`}>
-                {STATUS_LABELS[video.status]}
+              <p className={`library-item__status library-item__status--${job.status}`}>
+                {STATUS_LABELS[job.status]}
               </p>
             )}
           </li>

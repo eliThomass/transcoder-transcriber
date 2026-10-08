@@ -1,4 +1,4 @@
-import type { User } from '../auth/authApi.ts'
+import type { User } from '../api/types.ts'
 import { TABS } from '../config/navigation.ts'
 import type { TabId } from '../config/navigation.ts'
 import './TopBar.css'

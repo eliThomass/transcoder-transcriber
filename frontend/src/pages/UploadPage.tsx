@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import type { ChangeEvent, DragEvent, FormEvent } from 'react'
+import { errorMessage } from '../api/client.ts'
+import type { Job } from '../api/types.ts'
 import SelectField from '../components/SelectField.tsx'
 import {
   AUDIO_CODECS,
@@ -15,6 +17,7 @@ import {
 } from '../config/transcodeOptions.ts'
 import type { PresetChoice, TranscodeSettings } from '../config/transcodeOptions.ts'
 import FfmpegCommandPreview from '../dev/FfmpegCommandPreview.tsx'
+import { startEncode } from '../jobs/jobsApi.ts'
 import { formatFileSize } from '../utils/format.ts'
 import './UploadPage.css'
 
@@ -26,6 +29,12 @@ function isMp4(file: File) {
   return hasMp4Extension && hasMp4Type
 }
 
+type SubmitState =
+  | { status: 'idle' }
+  | { status: 'uploading' }
+  | { status: 'queued'; job: Job }
+  | { status: 'error'; message: string }
+
 function UploadPage() {
   const [file, setFile] = useState<File | null>(null)
   const [fileError, setFileError] = useState<string | null>(null)
@@ -34,12 +43,12 @@ function UploadPage() {
     QUALITY_PRESETS[DEFAULT_PRESET],
   )
   const [transcribe, setTranscribe] = useState(true)
-  const [status, setStatus] = useState<string | null>(null)
+  const [submitState, setSubmitState] = useState<SubmitState>({ status: 'idle' })
   const [isDragging, setIsDragging] = useState(false)
 
   // Returns false when the file was rejected.
   function selectFile(selected: File | null) {
-    setStatus(null)
+    setSubmitState({ status: 'idle' })
 
     if (selected && !isMp4(selected)) {
       setFile(null)
@@ -95,9 +104,12 @@ function UploadPage() {
       return
     }
 
-    // TODO: request a presigned upload URL from the API, PUT the file to S3,
-    // then create the job with { settings, transcribe }.
-    setStatus('Uploading is not connected to the backend yet.')
+    setSubmitState({ status: 'uploading' })
+    startEncode(file, settings, transcribe)
+      .then((job) => setSubmitState({ status: 'queued', job }))
+      .catch((error: unknown) =>
+        setSubmitState({ status: 'error', message: errorMessage(error) }),
+      )
   }
 
   return (
@@ -259,15 +271,26 @@ function UploadPage() {
             <button
               className="button button--primary upload-form__submit"
               type="submit"
-              disabled={!file}
+              disabled={!file || submitState.status === 'uploading'}
             >
               Upload and process
             </button>
           </div>
 
-          {status && (
+          {submitState.status === 'uploading' && (
             <p className="upload-form__status" role="status">
-              {status}
+              Uploading…
+            </p>
+          )}
+          {submitState.status === 'queued' && (
+            <p className="upload-form__status" role="status">
+              {submitState.job.fileName} is queued for encoding.{' '}
+              <a href="#/library">View it in your library</a>
+            </p>
+          )}
+          {submitState.status === 'error' && (
+            <p className="upload-form__status upload-form__status--error" role="alert">
+              {submitState.message}
             </p>
           )}
         </div>

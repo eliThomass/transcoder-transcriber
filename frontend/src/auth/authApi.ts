@@ -1,32 +1,12 @@
 import { ApiError, apiFetch, notConnected } from '../api/client.ts'
+import type { Credentials, User } from '../api/types.ts'
 import { API_CONNECTED, API_ROUTES } from '../config/api.ts'
 import { mockLogIn, mockSignUp } from '../dev/mockApi.ts'
 
-export type User = {
-  id: string
-  email: string
-}
-
-export type Credentials = {
-  email: string
-  password: string
-}
-
+/** Which form the auth dialog shows. UI-only; not part of the API contract. */
 export type AuthMode = 'logIn' | 'signUp'
 
 const NOT_CONNECTED_MESSAGE = "Accounts aren't available yet."
-
-export function logIn(credentials: Credentials): Promise<User> {
-  if (!API_CONNECTED.auth) {
-    return import.meta.env.DEV
-      ? mockLogIn(credentials)
-      : notConnected(NOT_CONNECTED_MESSAGE)
-  }
-  return apiFetch<User>(API_ROUTES.auth.logIn, {
-    method: 'POST',
-    body: JSON.stringify(credentials),
-  })
-}
 
 export function signUp(credentials: Credentials): Promise<User> {
   if (!API_CONNECTED.auth) {
@@ -35,6 +15,18 @@ export function signUp(credentials: Credentials): Promise<User> {
       : notConnected(NOT_CONNECTED_MESSAGE)
   }
   return apiFetch<User>(API_ROUTES.auth.signUp, {
+    method: 'POST',
+    body: JSON.stringify(credentials),
+  })
+}
+
+export function logIn(credentials: Credentials): Promise<User> {
+  if (!API_CONNECTED.auth) {
+    return import.meta.env.DEV
+      ? mockLogIn(credentials)
+      : notConnected(NOT_CONNECTED_MESSAGE)
+  }
+  return apiFetch<User>(API_ROUTES.auth.logIn, {
     method: 'POST',
     body: JSON.stringify(credentials),
   })

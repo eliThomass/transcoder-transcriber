@@ -206,3 +206,12 @@
   font-size: 0.875rem;
   color: var(--slate);
 }
+
+.upload-form__status a {
+  color: var(--accent);
+  text-underline-offset: 0.2em;
+}
+
+.upload-form__status--error {
+  color: var(--danger);
+}
