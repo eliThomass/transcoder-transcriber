@@ -1,6 +1,5 @@
 import subprocess
 
-
 #Only thing is that resolutuion is for 16:9 videos (laptop and PC) if we want  to support other ratios we need to tweak the frontend
 def runFfmpeg(inputFile, resolution, fps, videoCodec, encodingSpeed, quality, audioCodec,audioBitrate, outputFile):
     command = [
