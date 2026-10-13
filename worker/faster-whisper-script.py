@@ -10,11 +10,7 @@ def run_faster_whisper(video_file):
     # model = WhisperModel(MODEL_SIZE, device="cuda", compute_type="int8_float16")
 
     # or run on CPU with INT8
-    MODEL = WhisperModel(
-        MODEL_SIZE,
-        device="cpu",
-        compute_type="int8"
-    )
+    MODEL = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
     
     segments, info = MODEL.transcribe(video_file)
 
