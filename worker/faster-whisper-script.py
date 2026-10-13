@@ -1,7 +1,8 @@
 from faster_whisper import WhisperModel
 import json
+import os
 
-def run_faster_whisper(video_file, transcript):
+def run_faster_whisper(video_file):
     MODEL_SIZE = "medium.en"
     # Run on GPU with FP16
     # model = WhisperModel(MODEL_SIZE, device="cuda", compute_type="float16")
@@ -30,24 +31,28 @@ def run_faster_whisper(video_file, transcript):
     
     transcript = "\n".join(transcript_text)    
     word_count = len(transcript.split())
-
-    with open(transcript, "r", encoding="utf-8") as file:
-        data = json.load(file)
-
-    if "transcript_metadata" not in data:
-        data["transcript_metadata"] = {}
-
+    
     duration_seconds = info.duration
     if duration_seconds == 0:
-        return 0
-    
+        return None
+
     duration_minutes = duration_seconds / 60
     speech_rate = word_count / duration_minutes
 
-    data["transcript_metadata"]["speech_rate_wpm"] = speech_rate
-    data["transcript_metadata"]["word_count"] = word_count
-    data["transcript_metadata"]["transcript"] = transcript
-    data["transcript_metadata"]["segments"] = transcript_segments    
+    data = {
+        "transcript_metadata": {
+            "speech_rate_wpm": speech_rate,
+            "word_count": word_count,
+            "transcript": transcript,
+            "segments": transcript_segments,
+        }
+    }   
 
-    with open(transcript, "w", encoding="utf-8") as file:
+    base, _ = os.path.splitext(video_file)
+    transcript_file_name = base + "_transcript.json"
+
+    with open(transcript_file_name, "w", encoding="utf-8") as file:
         json.dump(data, file, indent=4, ensure_ascii=False)
+
+    return transcript_file_name
+    
