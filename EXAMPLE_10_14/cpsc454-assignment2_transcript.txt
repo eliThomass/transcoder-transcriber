@@ -1,0 +1,96 @@
+Hello, my name is Eli Thomas and for this individual project number two, I chose to explore AWS,
+which is what we're using for the group projects.
+And the three modules I chose to look into are I am S3 and SQS, because those are the ones we're going to be using in the project.
+So yeah, these are three pretty core AWS services.
+AWS offers a ton of services over 200, but these three are pretty foundational, especially I am,
+which is why I'm going to cover last or first excuse me, but that one handles security permissions so that I am stands for identity and access management.
+S3 is the one that handles the storage, and then SQS is for a pretty much a message queuing service to decouple parts of the application, which we'll get into later.
+And then yeah, so the goal at the end is to show these can like kind of combine together.
+So going into I am, as I said before, it stands for identity and access management and it's a foundation for pretty much every other module and AWS.
+And it really just serves one purpose and in that purpose is kind of controlling who can access what services and what services allow certain users into them.
+So every single request to AWS is checked through I am.
+And this applies to people on the console and the web, go down servers, workers, could be human or not.
+It's the core building blocks for I am, are the root user, and this is going to have unlimited access. So you should have like protect it, but you also don't really want to use it very often.
+Instead, what you want to do is set up user accounts for individual people and these can have different permissions for a different buckets or human services.
+It's like we'll get into later, as well as all the other modules that AWS provides. And you can also make groups to manage permissions for many users at once.
+And those have the same permissions you can apply to them as well.
+And then roles have no permanent keys and they give short lived credentials.
+So it's an easier way to access to manage secrets and things like that.
+But those are some of the core things for I am.
+This is a little example I have here for setting up a policy.
+So the permissions are JSON documents for policies. There's different statements you can have like affect action resource. There's another one I saw as well.
+But you can see the pretty much operations you can allow for a certain action.
+You make explicitly denied action. This one is showing allow business for an S3 bucket. We're getting an object from it.
+And also defines the exact resource. So the specific bucket as well.
+So yeah, and you also have to command line for actually making this this policy below as well.
+So for policy evaluation. So everything's denied by default. So that kind of like enforces leads privilege.
+And that's explicitly allowed action. And an explicit dies always going to win over and allow.
+As I just said, you know, it supports leads privilege only giving the permissions needed.
+So just make sure that any kind of malicious user is going to have everything be allowed right off the bat.
+I'm getting into S3 as well. So a simple storage service. I actually found that I was researching this.
+I never knew what S3 actually stood for. But yeah, so as it as the name kind of applies.
+So object storage service on traditional file system. Everything exists inside of buckets.
+And then the object is the file plus the metadata associated with that file.
+And then for actually identifying the files. It's just a key and that is just its name. So pretty simple there.
+And bucket names are globally unique across AWS as well. So you have to make them with different names each time.
+Just use the image placeholder there. I meant to fill that in for the durability and use cases for S3 buckets.
+I stayed on Amazon's like S3 info page. They're designed for 11 nines of durability.
+Across the different bucket types they have the advertise that.
+And what supports this is that they copy data across multiple data centers. So just in case one goes down to the other data centers can provide that availability.
+Automatically, which is great for upkeep. Also, S3 can be used for website images.
+And of course backups and pretty much anything that has to do with storage related stuff like file is your metadata inside of those buckets.
+Even like stuff. It's usually passwords. We'll see here in a second S3 is encrypted at rest.
+Also used for analytics, of course, and then data links. So pretty much just putting a bunch of data into a huge bucket.
+You can retrieve it with its name.
+This is a little demo code for creating a bucket and uploading a file to it.
+You can see the first thing in there is make a bucket and then you have copy some image you have on your system into this bucket.
+And then you can also do a list of bucket recursively to get all the different files.
+And also like S3 API for getting like a public block of it.
+It's very similar to GCS, which I used in the past. So it was nice to see that storage classes, which is what I mentioned a few slides ago, briefly.
+So you can pretty much define different storage classes for these S3 buckets.
+As you can see here, standards were like frequently asked access to excuse me.
+You have infrequent access classes, which is cheaper to store, but charges for retrieval and stuff.
+Basically for data that's not going to be accessed very frequently.
+I have glacier for long term archives, which is also the cheapest and security.
+What I said earlier is that it's encrypted at rest. So it would be pretty decent for storing passwords in S3.
+Of course, you want to encrypt them firsthand, but then they get encrypted over again at rest, which is great.
+Bucket policies as well. It's the same JSON format as I am.
+So it makes it easier.
+And then many breaches came from buckets. I actually made public.
+I remember when I was researching for my survey paper, I actually read about a bucket made public.
+I forget what it was, but yeah, that happened once and it was pretty terrible.
+So yeah.
+And also there's versioning for buckets. So in case some document gets updated to a newer version, but for if some reason that version gets corrupted or something,
+versioning helps so that you can go back to an old version that's still going to be stored in the bucket for at least some time.
+Moving on to the last service, I'm going to be going over, which is, excuse me, sqs, simple queue service.
+So one of AWS's oldest services introduced back in 2000 before, which is before S3 and EC2, I believe in 2006, which is interesting.
+So how is a message queue actually work? And this isn't just for sqs as other services to that provide this queuing service, but basically you have producers, which is basically parts of your code that's going to send out some kind of a message to this queue.
+Again, the message just waits in the queue. It's just like a regular queue.
+And it waits to be basically pulled by a consumer. Once it's pulled the consumer processes it.
+It also moment a specific consumer pulls a message out.
+Other consumers can't hold that same message, which is important for like not resending extra information around.
+The big benefit is decoupling. So your application can keep working while it's other tasks are just sitting in this queue waiting for a reply.
+So yeah.
+Another demo.
+Another demo here for sending or receiving a message.
+Once again, the terminal commands are actually pretty simple for creating this stuff, just adding queue names, different parameters you can add as well.
+Yeah.
+So yeah, there's different types of queues you can set up for sqs for standard, which is a bit different than five fo standard can be kind of a random order that it's a best effort kind of order from picking stuff from this queue.
+And then five foes more strict where the first item in this queue that gets put into the sqs queue is going to be the first item that's picked by a consumer.
+So yeah, as it says here on the slides, you should choose five for one order actually matters, like something like bank transactions.
+Whereas standard is just going to be a lot a bit faster.
+So yeah, this is what I was mentioning earlier with consumers. So when a consumer pulls a message, it's going to be hidden from other consumers so the default time up to 30 seconds here.
+It's processing from the consumer actually finishes it deletes it.
+If it crashes or you know, for some reason, the process doesn't finish the messages that I'm going to reappear after that 30 seconds for retry by another consumer security.
+So access is once again controlled with I am policies.
+Messages are going to be encrypted at rest while they wait that queue once again, just like s3.
+And there's resource based queue policies that are like bucket policies pretty much.
+So this is kind of a simple photo app here that we use all three of these things. So for example, I use a little bit upload a photo to an s3 bucket through some kind of a service.
+So when they upload that photo s3 would send a notification into an sqs queue.
+A worker could then pull the message and create a thumbnail from that image and display it on like the whatever front of the application is running.
+The I am roles you're going to limit whether work can do in the bucket and it's going to limit the worker to maybe one queue and one bucket.
+So just kind of ensuring that thing gets access that it shouldn't.
+So yeah, thanks for watching.
+A little recap is that I am secure system, credit policy, things like that.
+S3 is going to be storing the data just budget buckets and an sqs is going to keep components connected but independent so they can work concurrently almost.
+Thank you.

@@ -100,8 +100,15 @@ export async function getDownloadLink(
 
   // The page navigates to this URL, so refuse anything but https
   // (e.g. a javascript: URL from a compromised or misconfigured API).
-  if (new URL(link.url).protocol !== 'https:') {
+  if (!isSafeDownloadUrl(new URL(link.url))) {
     throw new Error('The download link was invalid.')
   }
   return link
+}
+
+// Dev builds also allow the local API's http://localhost stand-in for S3.
+function isSafeDownloadUrl(url: URL) {
+  if (url.protocol === 'https:') return true
+  const isLocalhost = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+  return import.meta.env.DEV && url.protocol === 'http:' && isLocalhost
 }
