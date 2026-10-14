@@ -4,18 +4,19 @@ import shutil
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from pathlib import PurePath
+from pathlib import Path, PurePath
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
+from starlette.datastructures import UploadFile
 
 from api import db
 from api.config import API_PUBLIC_URL, MAX_UPLOAD_BYTES, RETENTION_DAYS, STORAGE_DIR
 from api.schemas import CreateJobRequest, CreateUploadRequest, DownloadLink, Job, TranscodeSettings, UploadTicket
-from worker.transcode import InvalidInput, probe, transcode
-from worker.transcribe import transcribe
+from worker.Ffmpeg_script import InvalidInput, probeVideo, runFfmpeg
+from worker.faster_whisper_script import run_faster_whisper
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["jobs"])
@@ -23,6 +24,12 @@ Db = Annotated[sqlite3.Connection, Depends(db.get_db)]
 
 # One job at a time so FFmpeg and Whisper don't compete for the CPU.
 _executor = ThreadPoolExecutor(max_workers=1)
+
+# Frontend setting keys -> FFmpeg values; only these can reach FFmpeg.
+HEIGHTS = {"1080p": "1080", "720p": "720", "480p": "480"}
+VIDEO_ENCODERS = {"h264": "libx264"}
+AUDIO_ENCODERS = {"mp3": "libmp3lame"}
+AUDIO_BITRATE = "128k"  # not a user option
 
 
 def _job_from_row(row: sqlite3.Row) -> Job:
@@ -66,12 +73,18 @@ def process_job(job_id: str) -> None:
         out = STORAGE_DIR / output_key
         out.parent.mkdir(parents=True, exist_ok=True)
         try:
-            info = probe(src)  # rejects anything that isn't a real MP4 video
-            transcode(settings, src, out)
+            has_audio = probeVideo(src)  # rejects anything that isn't a real MP4 video
+            runFfmpeg(
+                str(src), None, HEIGHTS[settings.resolution],
+                None if settings.frame_rate == "original" else settings.frame_rate,
+                VIDEO_ENCODERS[settings.video_codec], settings.encoding_speed, settings.quality,
+                AUDIO_ENCODERS[settings.audio_codec], AUDIO_BITRATE, outputFile=out, brightness=settings.brightness,
+            )
             transcript_key = None
-            if row["transcribe"] and info.has_audio:
-                transcript_key = f"outputs/{job_id}/transcript.txt"
-                transcribe(out, STORAGE_DIR / transcript_key)  # our own output, not the raw upload
+            if row["transcribe"] and has_audio:
+                # Transcribes our own output, not the raw upload; writes video_<res>_transcript.json beside it.
+                if transcript_file := run_faster_whisper(str(out)):
+                    transcript_key = Path(transcript_file).relative_to(STORAGE_DIR).as_posix()
             _finish(conn, job_id, "ready", output_key=output_key, transcript_key=transcript_key,
                     size=out.stat().st_size)
         except Exception as e:
@@ -103,23 +116,31 @@ def create_upload(body: CreateUploadRequest, conn: Db) -> UploadTicket:
 
 # Step 2: the browser sends the file here (stand-in for uploading straight to S3).
 @router.post("/uploads/{upload_id}/file", status_code=204)
-async def receive_upload(upload_id: UUID, file: UploadFile, conn: Db) -> None:
+async def receive_upload(upload_id: UUID, request: Request, conn: Db) -> None:
+    # Reject oversized bodies before reading them (S3 enforces this with the POST policy).
+    length = request.headers.get("content-length", "")
+    if not length.isdigit() or int(length) > MAX_UPLOAD_BYTES + 64 * 1024:  # small allowance for form headers
+        raise HTTPException(413, "This file is larger than the upload limit.")
     row = conn.execute("SELECT key FROM uploads WHERE id = ? AND received = 0", (str(upload_id),)).fetchone()
     if not row:
         raise HTTPException(404, "Upload not found or already received.")
     dest = STORAGE_DIR / row["key"]
     dest.parent.mkdir(parents=True, exist_ok=True)
-    size = 0
-    try:
-        with dest.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:  # don't trust the size the client declared
-                    raise HTTPException(413, "This file is larger than the upload limit.")
-                out.write(chunk)
-    except HTTPException:
-        dest.unlink(missing_ok=True)
-        raise
+    async with request.form(max_files=1) as form:
+        file = form.get("file")
+        if not isinstance(file, UploadFile):
+            raise HTTPException(400, "Missing file.")
+        size = 0
+        try:
+            with dest.open("wb") as out:
+                while chunk := await file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:  # don't trust the declared size either
+                        raise HTTPException(413, "This file is larger than the upload limit.")
+                    out.write(chunk)
+        except HTTPException:
+            dest.unlink(missing_ok=True)
+            raise
     with conn:
         conn.execute("UPDATE uploads SET received = 1 WHERE id = ?", (str(upload_id),))
 
@@ -171,5 +192,5 @@ def download_file(job_id: UUID, file: Literal["video", "transcript"], conn: Db) 
         raise HTTPException(404, "File not available.")
     stem = re.sub(r"[^A-Za-z0-9._ -]", "_", PurePath(row["file_name"]).stem)[:100] or "video"  # safe filename
     resolution = TranscodeSettings.model_validate_json(row["settings"]).resolution
-    filename = f"{stem}_{resolution}.mp4" if file == "video" else f"{stem}_transcript.txt"
+    filename = f"{stem}_{resolution}.mp4" if file == "video" else f"{stem}_transcript.json"
     return FileResponse(STORAGE_DIR / key, filename=filename, content_disposition_type="attachment")

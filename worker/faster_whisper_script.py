@@ -1,16 +1,25 @@
+from functools import cache
 from faster_whisper import WhisperModel
 import json
 import os
 
-def run_faster_whisper(video_file):
-    MODEL_SIZE = "medium.en"
+# Set WHISPER_MODEL=base (or tiny) for faster local runs; medium.en is ~1.5 GB and slow on CPU.
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "medium.en")
+
+# Load the model once and reuse it for every job (the first call downloads it).
+@cache
+def load_model():
     # Run on GPU with FP16
     # model = WhisperModel(MODEL_SIZE, device="cuda", compute_type="float16")
     # or run on GPU with INT8
     # model = WhisperModel(MODEL_SIZE, device="cuda", compute_type="int8_float16")
 
     # or run on CPU with INT8
-    MODEL = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
+    return WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
+
+# Writes <video>_transcript.json next to the video and returns its path (None if there's no audio to transcribe).
+def run_faster_whisper(video_file):
+    MODEL = load_model()
     
     segments, info = MODEL.transcribe(video_file)
 
