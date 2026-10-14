@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getCurrentUser, logOut } from './auth/authApi.ts'
-import type { AuthMode, User } from './auth/authApi.ts'
+import type { User } from './api/types.ts'
+import type { AuthMode } from './auth/authApi.ts'
 import AuthDialog from './components/AuthDialog.tsx'
 import TopBar from './components/TopBar.tsx'
 import { tabFromHash } from './config/navigation.ts'
