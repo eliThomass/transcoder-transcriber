@@ -7,16 +7,14 @@ From the project root:
 
 ```bash
 uv sync
-uv run fastapi dev api/main.py --reload
+uv run fastapi dev api/main.py     # API at http://localhost:8000 (docs at /docs)
 ```
 
-Or run (without uv):
+Requires FFmpeg on your PATH (`brew install ffmpeg`). The first transcript downloads the Whisper model (~150 MB for `base`; set `WHISPER_MODEL=tiny` for a faster one).
 
-```bash
-uvicorn api.main:app --reload
-```
+Everything is local for now. Uploaded videos, encoded outputs and transcripts are saved in `local_data/storage/`, and job info is in `local_data/app.sqlite3` (both gitignored). Encoding and transcription run inside the API process, one job at a time.
 
-The API will be available at http://localhost:8000.
+**No access control yet:** there are no accounts, so anyone who can reach the API can upload files and see or download every job. Only run it on your own machine (`fastapi dev` listens on `127.0.0.1` by default).
 
 ## Frontend (React + Vite)
 
@@ -57,7 +55,7 @@ frontend/src/
 
 ### Connecting to the backend
 
-The frontend is ready for the API but isn't connected yet. All endpoint paths are in `src/config/api.ts`, and all request and response shapes are in `src/api/types.ts`. The FastAPI models should use the same names and fields, in camelCase JSON.
+Encoding and the Library are connected to the API (`API_CONNECTED.jobs` is `true`). Accounts aren't built yet, so `auth` stays `false` and dev mode logs in with mock data. All endpoint paths are in `src/config/api.ts`, and all request and response shapes are in `src/api/types.ts`. The FastAPI models should use the same names and fields, in camelCase JSON.
 
 Each feature has a flag in `API_CONNECTED` (`auth` and `jobs`). While a flag is `false`:
 
