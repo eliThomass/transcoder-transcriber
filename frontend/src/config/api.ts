@@ -7,8 +7,8 @@ export const API_BASE_URL: string =
 // its API functions return mock data in `npm run dev` (see src/dev/mockApi.ts)
 // and a "not available yet" error in production builds.
 export const API_CONNECTED: { auth: boolean; jobs: boolean } = {
-  auth: false,
-  jobs: false, // covers /uploads and /jobs/*
+  auth: false, // no accounts yet; dev mode logs in with mock data
+  jobs: true, // covers /uploads and /jobs/*
 }
 
 // Every endpoint the frontend expects. Request and response types are in
