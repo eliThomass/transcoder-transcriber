@@ -24,6 +24,7 @@ def create_json(segments, info, video_file):
     word_count = len(transcript.split())
     
     duration_seconds = info.duration
+    # Error handling for when video_file is empty or otherwise invalid
     if duration_seconds == 0:
         return None
 
@@ -49,7 +50,11 @@ def create_json(segments, info, video_file):
 
 
 # Creates SRT file from the information collected from faster-whisper and returns the SRT file name
-def create_srt(segments, video_file):
+def create_srt(segments, info, video_file):
+    # Error handling for when video_file is empty or otherwise invalid
+    if info.duration == 0:
+        return None
+    
     base, _ = os.path.splitext(video_file)
     srt_transcript_file_name = base + "_transcript.srt"
 
@@ -91,7 +96,7 @@ def run_faster_whisper(video_file):
     segments, info = MODEL.transcribe(video_file, vad_filter=True)
 
     json_transcript_file_name = create_json(segments, info, video_file)
-    srt_transcript_file_name = create_srt(segments, video_file)
+    srt_transcript_file_name = create_srt(segments, info, video_file)
 
     return json_transcript_file_name, srt_transcript_file_name
     
