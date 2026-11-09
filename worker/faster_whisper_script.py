@@ -89,11 +89,14 @@ def load_model():
     return WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
 
 
-# Writes <video>_transcript.json next to the video and returns its path (None if there's no audio to transcribe).
+# Writes <video>_transcript.json and <video>_transcript.srt next to the video and returns
+# (json_path, srt_path); both are None if there's no audio to transcribe.
 def run_faster_whisper(video_file):
     MODEL = load_model()
-    
+
     segments, info = MODEL.transcribe(video_file, vad_filter=True)
+    # transcribe() returns a one-shot generator; without list() create_json would use it up and the SRT would be empty.
+    segments = list(segments)
 
     json_transcript_file_name = create_json(segments, info, video_file)
     srt_transcript_file_name = create_srt(segments, info, video_file)

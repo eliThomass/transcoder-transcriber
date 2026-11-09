@@ -110,9 +110,10 @@ export type Job = {
   error: string | null // user-safe message when status is 'failed'
 }
 
-export type DownloadFile = 'video' | 'transcript'
+// 'transcript' is the JSON transcript; 'srt' is the same transcript as subtitles.
+export type DownloadFile = 'video' | 'transcript' | 'srt'
 
-/** Response for GET /jobs/{jobId}/download?file=video|transcript. */
+/** Response for GET /jobs/{jobId}/download?file=video|transcript|srt. */
 export type DownloadLink = {
   url: string // short-lived presigned S3 GET URL (Content-Disposition: attachment)
   expiresAt: IsoDateTime
