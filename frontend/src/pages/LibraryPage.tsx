@@ -163,6 +163,16 @@ function LibraryList() {
                     Download transcript
                   </button>
                 )}
+                {job.hasTranscript && (
+                  <button
+                    className="button button--secondary button--small"
+                    type="button"
+                    aria-label={`Download subtitles: ${job.fileName}`}
+                    onClick={() => handleDownload(job, 'srt')}
+                  >
+                    Download subtitles
+                  </button>
+                )}
               </div>
             ) : (
               <p className={`library-item__status library-item__status--${job.status}`}>

@@ -33,7 +33,7 @@ export const API_ROUTES = {
     // GET -> Job; DELETE -> 204 (deletes the job and its S3 files early)
     detail: (jobId: string) => `/jobs/${encodeURIComponent(jobId)}`,
     // GET -> DownloadLink
-    download: (jobId: string, file: 'video' | 'transcript') =>
+    download: (jobId: string, file: 'video' | 'transcript' | 'srt') =>
       `/jobs/${encodeURIComponent(jobId)}/download?file=${file}`,
   },
 } as const

@@ -16,16 +16,16 @@ This branch keeps only the essentials: upload a video, encode and transcribe it,
   - `config.py`: env-driven settings (`DATA_DIR`, `MAX_UPLOAD_BYTES`, `CORS_ORIGINS`, ...).
   - `db.py`: SQLite (`local_data/app.sqlite3`) with `uploads` and `jobs` tables.
   - `schemas.py`: Pydantic mirror of the parts of `frontend/src/api/types.ts` in use. Keep the two in sync.
-  - `jobs.py`: `POST /uploads`, `POST /uploads/{id}/file` (stand-in for the browser's direct S3 upload), `POST /jobs`, `GET /jobs`, `GET /jobs/{id}/download` and `GET /jobs/{id}/files/{file}`. Jobs run one at a time on a background thread inside the API.
-  - Files are saved under `local_data/storage/` using the planned S3 keys (`uploads/<uploadId>.mp4`, `outputs/<jobId>/video_<res>.mp4`, `outputs/<jobId>/video_<res>_transcript.json`). The API maps setting keys to FFmpeg values (`HEIGHTS`, `VIDEO_ENCODERS`, ... in `jobs.py`) before calling the worker functions.
+  - `jobs.py`: `POST /uploads`, `POST /uploads/{id}/file` (stand-in for the browser's direct S3 upload), `POST /jobs`, `GET /jobs`, `GET /jobs/{id}/download` and `GET /jobs/{id}/files/{file}` (`file` is `video`, `transcript` or `srt`). Jobs run one at a time on a background thread inside the API.
+  - Files are saved under `local_data/storage/` using the planned S3 keys (`uploads/<uploadId>.mp4`, `outputs/<jobId>/video_<res>.mp4`, `outputs/<jobId>/video_<res>_transcript.json` and `.srt`). The DB stores only the JSON key; the SRT path is derived from it. The API maps setting keys to FFmpeg values (`HEIGHTS`, `VIDEO_ENCODERS`, ... in `jobs.py`) before calling the worker functions.
 - `worker/`: teammates' scripts, which the API calls directly. They're plain functions, ready to move to an EC2 worker. Keep their names and signatures; teammates own them.
   - `Ffmpeg_script.py` (Grmnca): `runFfmpeg(...)` takes raw FFmpeg values; `outputFile=None` falls back to the `videos_un/` → `videos_pro/` test folders. Also `probeVideo()` (ffprobe check: duration, frame size, audio). The command forces `-f mp4 -protocol_whitelist file`, caps output with `-t`, and strips metadata. The test call at the bottom runs only under `__main__`.
-  - `faster_whisper_script.py` (Brian): `run_faster_whisper(video)` writes `<video>_transcript.json` (full text, timestamped segments, word count, speech rate) and returns its path. The model (`WHISPER_MODEL`, default `medium.en`) is loaded once.
-  - `converter.py`: JSON → SRT, in progress. `videos_un/`, `videos_pro/` and `worker/*.mp4` are teammates' committed test files.
+  - `faster_whisper_script.py` (Brian): `run_faster_whisper(video)` writes `<video>_transcript.json` (full text, timestamped segments, word count, speech rate) and `<video>_transcript.srt` (subtitles), and returns `(json_path, srt_path)`; both are `None` if there's no audio. `transcribe()` returns a one-shot generator, so it's turned into a list before both writers use it. The model (`WHISPER_MODEL`, default `medium.en`) is loaded once.
+  - `converter.py`: an unfinished JSON → SRT converter, now superseded by `create_srt()` in `faster_whisper_script.py`. `videos_un/`, `videos_pro/` and `worker/*.mp4` are teammates' committed test files.
 - Not implemented yet: `/auth/*`, `GET /jobs/{id}`, `DELETE /jobs/{id}`, expiry cleanup and tests.
 - `frontend/`: React 19 + Vite + TypeScript. `App.tsx` renders a top bar (`components/TopBar.tsx`) with **Encode** and **Library** tabs and Log in / Sign up buttons, and opens `components/AuthDialog.tsx` (a native `<dialog>`) for login and signup. Tabs use the URL hash (`#/encode`, `#/library`; see `config/navigation.ts`), not a router library. The logged-in `user` state lives in `App.tsx`.
   - `src/pages/UploadPage.tsx` (Encode tab): MP4 file picker, Low/Medium/High/Custom preset, and dropdowns for each FFmpeg option. Submit calls `startEncode()` (see below). The file picker is a 16:9 "monitor" drop zone (click or drag-and-drop) with SMPTE color bars.
-  - `src/pages/LibraryPage.tsx` (Library tab): when logged out, a prompt to log in. When logged in, the user's jobs with status (queued / processing / ready / failed), expiry, and buttons to download the video and the transcript.
+  - `src/pages/LibraryPage.tsx` (Library tab): when logged out, a prompt to log in. When logged in, the user's jobs with status (queued / processing / ready / failed), expiry, and buttons to download the video, the transcript (JSON) and subtitles (SRT).
   - Styling is plain CSS with BEM-style class names (`upload-form__section`, `field__label`, ...). `src/styles/global.css` holds the design tokens (CSS variables), base styles, and the shared `.page`, `.button` and `.field` styles. Each page or component imports its own stylesheet next to it (e.g. `UploadPage.css`). The look: cool grey "paper", graphite ink, a single blue accent (`--accent`) and the Archivo variable font from Google Fonts, which uses `font-stretch` for width. Avoid generic template looks (cards with shadows, gradients, all-caps labels).
   - `src/config/transcodeOptions.ts` defines every dropdown's options, the `TranscodeSettings` type and the preset values. Option values are short keys (`'h264'`, `'720p'`), not FFmpeg flags. The API must map them to arguments from its own whitelist.
   - `src/components/SelectField.tsx` is the reusable labelled `<select>`.
@@ -75,7 +75,7 @@ Types are in `frontend/src/api/types.ts`; paths are in `frontend/src/config/api.
 | GET | `/jobs` | | `Job[]`, newest first |
 | GET | `/jobs/{jobId}` | | `Job` |
 | DELETE | `/jobs/{jobId}` | | 204; deletes the job's S3 files early |
-| GET | `/jobs/{jobId}/download?file=video\|transcript` | | `DownloadLink` |
+| GET | `/jobs/{jobId}/download?file=video\|transcript\|srt` | | `DownloadLink` |
 
 The encode flow:
 
@@ -97,10 +97,12 @@ Python backend (run from the repo root; uses **uv**):
 
 ```bash
 uv sync                                   # install deps into .venv
-uv run fastapi dev api/main.py            # dev server at http://localhost:8000 (auto-reload)
+uv run uvicorn api.main:app --reload --reload-dir api --reload-dir worker   # dev server at http://localhost:8000
 uv add <pkg>                              # add a dependency (updates pyproject.toml + uv.lock)
 uv export --format requirements-txt > requirements.txt   # regenerate after dep changes
 ```
+
+Don't use `fastapi dev` for testing jobs. It watches the whole repo, including `.venv/`, so any change there (`uv sync`, or a sync tool such as iCloud touching files) restarts the server. Jobs run inside the API process, so a restart kills the running job, and on startup it is marked "Encoding was interrupted". The `--reload-dir` flags limit reloads to our code. Prefix with `WHISPER_MODEL=base` for faster local transcription (the default `medium.en` is ~1.5 GB and slow on CPU).
 
 `requirements.txt` is generated by `uv export`. Do not edit it by hand. Regenerate it whenever `pyproject.toml` changes so that pip users stay in sync.
 
@@ -153,6 +155,7 @@ The storage backend for job/user metadata (DynamoDB, RDS, etc.) has not been cho
 
 - Invoke FFmpeg with `subprocess.run([...])` and an **argument list**. Never use `shell=True` or string-interpolated commands, because filenames and options come from users and would allow command injection. Whitelist allowed resolutions, codecs and presets rather than passing user values through.
 - **Supported codecs for now: H.264 video (`libx264`) and MP3 audio (`libmp3lame`) in MP4.** Don't add other codecs unless asked. Audio bitrate is not a user option; the AWS worker chooses it.
+  - Known limitation: Apple's players (QuickTime, Finder Quick Look, Safari, iOS) can't decode MP3 inside MP4, so they play our outputs silently. Chrome, Firefox and VLC are fine. Switching to AAC (FFmpeg's built-in `aac`) would fix it, but that's a team decision that hasn't been made. If it happens, the schema must keep accepting `"mp3"` so existing jobs still load.
 - Baseline rendition command (30 fps, CRF 23, `medium` preset):
 
   ```bash

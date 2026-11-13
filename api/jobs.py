@@ -31,6 +31,8 @@ VIDEO_ENCODERS = {"h264": "libx264"}
 AUDIO_ENCODERS = {"mp3": "libmp3lame"}
 AUDIO_BITRATE = "128k"  # not a user option
 
+DownloadFile = Literal["video", "transcript", "srt"]
+
 
 def _job_from_row(row: sqlite3.Row) -> Job:
     return Job(
@@ -82,9 +84,10 @@ def process_job(job_id: str) -> None:
             )
             transcript_key = None
             if row["transcribe"] and has_audio:
-                # Transcribes our own output, not the raw upload; writes video_<res>_transcript.json beside it.
-                if transcript_file := run_faster_whisper(str(out)):
-                    transcript_key = Path(transcript_file).relative_to(STORAGE_DIR).as_posix()
+                # Transcribes our own output, not the raw upload; writes video_<res>_transcript.json/.srt beside it.
+                json_file, _ = run_faster_whisper(str(out))
+                if json_file:
+                    transcript_key = Path(json_file).relative_to(STORAGE_DIR).as_posix()
             _finish(conn, job_id, "ready", output_key=output_key, transcript_key=transcript_key,
                     size=out.stat().st_size)
         except Exception as e:
@@ -177,7 +180,7 @@ def list_jobs(conn: Db) -> list[Job]:
 
 # On AWS this returns a short-lived presigned S3 GET URL instead.
 @router.get("/jobs/{job_id}/download")
-def get_download_link(job_id: UUID, file: Literal["video", "transcript"]) -> DownloadLink:
+def get_download_link(job_id: UUID, file: DownloadFile) -> DownloadLink:
     return DownloadLink(
         url=f"{API_PUBLIC_URL}/jobs/{job_id}/files/{file}",
         expires_at=db.utcnow() + timedelta(minutes=5),  # not enforced locally
@@ -185,12 +188,16 @@ def get_download_link(job_id: UUID, file: Literal["video", "transcript"]) -> Dow
 
 
 @router.get("/jobs/{job_id}/files/{file}")
-def download_file(job_id: UUID, file: Literal["video", "transcript"], conn: Db) -> FileResponse:
+def download_file(job_id: UUID, file: DownloadFile, conn: Db) -> FileResponse:
     row = _job_row(conn, job_id)
     key = row["output_key"] if file == "video" else row["transcript_key"]
-    if row["status"] != "ready" or not key:
+    if key and file == "srt":
+        key = PurePath(key).with_suffix(".srt").as_posix()  # the worker writes it beside the JSON
+    # Jobs from before SRT support have no .srt on disk.
+    if row["status"] != "ready" or not key or not (STORAGE_DIR / key).is_file():
         raise HTTPException(404, "File not available.")
     stem = re.sub(r"[^A-Za-z0-9._ -]", "_", PurePath(row["file_name"]).stem)[:100] or "video"  # safe filename
     resolution = TranscodeSettings.model_validate_json(row["settings"]).resolution
-    filename = f"{stem}_{resolution}.mp4" if file == "video" else f"{stem}_transcript.json"
+    filename = {"video": f"{stem}_{resolution}.mp4", "transcript": f"{stem}_transcript.json",
+                "srt": f"{stem}_{resolution}.srt"}[file]
     return FileResponse(STORAGE_DIR / key, filename=filename, content_disposition_type="attachment")
