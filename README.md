@@ -36,6 +36,17 @@ Then open http://localhost:5173, encode a video, and log in (any email and passw
 
 The first transcript downloads the Whisper model. The default `medium.en` is about 1.5 GB and slow on a CPU; for quicker local runs start the API with `WHISPER_MODEL=base uv run fastapi dev api/main.py` (or `tiny`).
 
+## AWS setup
+
+The app doesn't use AWS yet, but you can connect and check access now. Ask for an IAM user in the team account (`850870347029`) with the `SignInLocalDevelopmentAccess` policy. Don't use access keys or root.
+
+```bash
+aws login --profile cpsc454                                # region us-east-1; sign in as your IAM user in the browser
+AWS_PROFILE=cpsc454 uv run python scripts/check_aws.py     # read-only; should print your user and "credentials: login"
+```
+
+Sessions last up to 12 hours; run `aws login --profile cpsc454` again after that. The bucket and queues, their settings, and how to check them are in [docs/aws-resources.md](docs/aws-resources.md).
+
 ## Backend
 
 ```
