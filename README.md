@@ -40,10 +40,12 @@ The first transcript downloads the Whisper model. The default `medium.en` is abo
 
 The app doesn't use AWS yet, but you can connect and check access now. Ask for an IAM user in the team account (`850870347029`) with the `SignInLocalDevelopmentAccess` policy. Don't use access keys or root.
 
+In the commands below, replace **`my-profile`** with your own AWS CLI profile name, meaning whatever you pass to `aws login --profile`. `aws configure list-profiles` shows your profiles. If you signed in without `--profile`, use `default`.
+
 First, sign in. When asked for a region, enter `us-east-1`, then approve in the browser as your IAM user:
 
 ```bash
-aws login --profile cpsc454
+aws login --profile my-profile
 ```
 
 Then run the check. It's read-only. It should print your user, `credentials: login`, the bucket and the queue, with no `WARNING` lines.
@@ -51,7 +53,7 @@ Then run the check. It's read-only. It should print your user, `credentials: log
 macOS / Linux:
 
 ```bash
-AWS_PROFILE=cpsc454 S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an \
+AWS_PROFILE=my-profile S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an \
   SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs \
   uv run python scripts/check_aws.py
 ```
@@ -59,13 +61,22 @@ AWS_PROFILE=cpsc454 S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an
 Windows (cmd). The `set` values last until you close the window:
 
 ```bat
-set AWS_PROFILE=cpsc454
+set AWS_PROFILE=my-profile
 set S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an
 set SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs
 uv run python scripts\check_aws.py
 ```
 
-Sessions last up to 12 hours; run `aws login --profile cpsc454` again after that. The bucket and queues, their settings, and the rules for code that uses them are in [docs/aws-resources.md](docs/aws-resources.md).
+Windows (PowerShell). The `$env:` values last until you close the window:
+
+```powershell
+$env:AWS_PROFILE = "my-profile"
+$env:S3_BUCKET = "transcoding-titans-media-850870347029-us-east-1-an"
+$env:SQS_QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs"
+uv run python scripts\check_aws.py
+```
+
+Sessions last up to 12 hours; run `aws login --profile my-profile` again after that. The bucket and queues, their settings, and the rules for code that uses them are in [docs/aws-resources.md](docs/aws-resources.md).
 
 ## Backend
 

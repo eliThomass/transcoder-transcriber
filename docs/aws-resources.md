@@ -6,7 +6,7 @@ The project's S3 bucket and SQS queues: what exists, how code should use them, a
 
 | | |
 |---|---|
-| Account | `850870347029`. Sign in as your own IAM user (`aws login --profile cpsc454`), never root. |
+| Account | `850870347029`. Sign in as your own IAM user (`aws login --profile my-profile`), never root. |
 | Region | **`us-east-1`**. Team IAM policies only allow SQS, EC2, RDS, Cognito and Logs there. |
 | Bucket | `transcoding-titans-media-850870347029-us-east-1-an` |
 | Job queue | `https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs` |
@@ -16,10 +16,10 @@ The project's S3 bucket and SQS queues: what exists, how code should use them, a
 
 Created 2026-11-11 by Eli and verified. **Open item:** the bucket's `abort-incomplete-multipart` lifecycle rule hasn't been added yet.
 
-Check access and settings (read-only; prints a `WARNING` for anything that doesn't match this file):
+Check access and settings (read-only; prints a `WARNING` for anything that doesn't match this file). Replace `my-profile` with your AWS CLI profile name; the README has Windows versions:
 
 ```bash
-AWS_PROFILE=cpsc454 S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an \
+AWS_PROFILE=my-profile S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an \
   SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs \
   uv run python scripts/check_aws.py
 ```
