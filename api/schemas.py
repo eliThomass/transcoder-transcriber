@@ -29,6 +29,16 @@ class HealthResponse(Model):
     status: Literal["ok"] = "ok"
 
 
+class User(Model):
+    id: str  # the user's Cognito `sub`
+    email: str
+    created_at: datetime
+
+
+class LogoutResponse(Model):
+    url: str  # Cognito's logout page; the browser goes there to end the Cognito login too
+
+
 class CreateUploadRequest(Model):
     file_name: str = Field(min_length=1, max_length=255)
     content_type: Literal["video/mp4"]

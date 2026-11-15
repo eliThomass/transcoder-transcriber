@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from starlette.datastructures import UploadFile
 
 from api import db
+from api.auth import CurrentUser
 from api.config import API_PUBLIC_URL, MAX_UPLOAD_BYTES, RETENTION_DAYS, STORAGE_DIR
 from api.schemas import CreateJobRequest, CreateUploadRequest, DownloadLink, Job, TranscodeSettings, UploadTicket
 from worker.Ffmpeg_script import InvalidInput, probeVideo, runFfmpeg
@@ -34,6 +35,7 @@ AUDIO_BITRATE = "128k"  # not a user option
 DownloadFile = Literal["video", "transcript", "srt"]
 
 
+# Converts a jobs table row into the API's Job response.
 def _job_from_row(row: sqlite3.Row) -> Job:
     return Job(
         id=row["id"], status=row["status"], file_name=row["file_name"],
@@ -44,6 +46,7 @@ def _job_from_row(row: sqlite3.Row) -> Job:
     )
 
 
+# Any job by ID, for the background worker only. Routes use _user_job instead.
 def _job_row(conn: sqlite3.Connection, job_id: UUID | str) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM jobs WHERE id = ?", (str(job_id),)).fetchone()
     if not row:
@@ -51,6 +54,15 @@ def _job_row(conn: sqlite3.Connection, job_id: UUID | str) -> sqlite3.Row:
     return row
 
 
+# A job owned by this user. Other users' jobs return 404, so their existence isn't revealed.
+def _user_job(conn: sqlite3.Connection, job_id: UUID | str, user: sqlite3.Row) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM jobs WHERE id = ? AND user_id = ?", (str(job_id), user["id"])).fetchone()
+    if not row:
+        raise HTTPException(404, "Job not found.")
+    return row
+
+
+# Records a job's final status and output files.
 def _finish(conn: sqlite3.Connection, job_id: str, status: str, error: str | None = None,
             output_key: str | None = None, transcript_key: str | None = None, size: int | None = None) -> None:
     with conn:
@@ -103,14 +115,14 @@ def process_job(job_id: str) -> None:
 
 # Step 1 of encoding: reserve an upload. On AWS this returns a presigned S3 POST instead.
 @router.post("/uploads", status_code=201)
-def create_upload(body: CreateUploadRequest, conn: Db) -> UploadTicket:
+def create_upload(body: CreateUploadRequest, conn: Db, user: CurrentUser) -> UploadTicket:
     if body.size_bytes > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"Videos can be at most {MAX_UPLOAD_BYTES // 1024**2} MB.")
     upload_id = uuid4()
     key = f"uploads/{upload_id}.mp4"  # server-generated; the user's filename is display-only
     with conn:
-        conn.execute("INSERT INTO uploads (id, file_name, key) VALUES (?, ?, ?)",
-                     (str(upload_id), body.file_name, key))
+        conn.execute("INSERT INTO uploads (id, user_id, file_name, key) VALUES (?, ?, ?, ?)",
+                     (str(upload_id), user["id"], body.file_name, key))
     return UploadTicket(
         upload_id=upload_id, url=f"{API_PUBLIC_URL}/uploads/{upload_id}/file", fields={},
         max_size_bytes=MAX_UPLOAD_BYTES, expires_at=db.utcnow() + timedelta(minutes=15),
@@ -118,6 +130,7 @@ def create_upload(body: CreateUploadRequest, conn: Db) -> UploadTicket:
 
 
 # Step 2: the browser sends the file here (stand-in for uploading straight to S3).
+# No session check, like a presigned S3 POST: the random upload ID only its owner knows is the permission.
 @router.post("/uploads/{upload_id}/file", status_code=204)
 async def receive_upload(upload_id: UUID, request: Request, conn: Db) -> None:
     # Reject oversized bodies before reading them (S3 enforces this with the POST policy).
@@ -150,8 +163,9 @@ async def receive_upload(upload_id: UUID, request: Request, conn: Db) -> None:
 
 # Step 3: record the job and start it in the background.
 @router.post("/jobs", status_code=202)
-def create_job(body: CreateJobRequest, conn: Db) -> Job:
-    upload = conn.execute("SELECT * FROM uploads WHERE id = ?", (str(body.upload_id),)).fetchone()
+def create_job(body: CreateJobRequest, conn: Db, user: CurrentUser) -> Job:
+    upload = conn.execute("SELECT * FROM uploads WHERE id = ? AND user_id = ?",
+                          (str(body.upload_id), user["id"])).fetchone()
     if not upload:
         raise HTTPException(404, "Upload not found.")
     if not upload["received"]:
@@ -160,10 +174,10 @@ def create_job(body: CreateJobRequest, conn: Db) -> Job:
     try:
         with conn:
             conn.execute(
-                """INSERT INTO jobs (id, upload_id, status, file_name, settings, transcribe, input_key,
+                """INSERT INTO jobs (id, user_id, upload_id, status, file_name, settings, transcribe, input_key,
                        created_at, updated_at, expires_at)
-                   VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)""",
-                (job_id, upload["id"], upload["file_name"], body.settings.model_dump_json(by_alias=True),
+                   VALUES (?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)""",
+                (job_id, user["id"], upload["id"], upload["file_name"], body.settings.model_dump_json(by_alias=True),
                  body.transcribe, upload["key"], db.to_db(now), db.to_db(now),
                  db.to_db(now + timedelta(days=RETENTION_DAYS))),
             )
@@ -173,23 +187,27 @@ def create_job(body: CreateJobRequest, conn: Db) -> Job:
     return _job_from_row(_job_row(conn, job_id))
 
 
+# The user's own jobs, newest first.
 @router.get("/jobs")
-def list_jobs(conn: Db) -> list[Job]:
-    return [_job_from_row(row) for row in conn.execute("SELECT * FROM jobs ORDER BY created_at DESC")]
+def list_jobs(conn: Db, user: CurrentUser) -> list[Job]:
+    rows = conn.execute("SELECT * FROM jobs WHERE user_id = ? ORDER BY created_at DESC", (user["id"],))
+    return [_job_from_row(row) for row in rows]
 
 
-# On AWS this returns a short-lived presigned S3 GET URL instead.
+# A download link for one of the user's jobs. On AWS this returns a short-lived presigned S3 GET URL instead.
 @router.get("/jobs/{job_id}/download")
-def get_download_link(job_id: UUID, file: DownloadFile) -> DownloadLink:
+def get_download_link(job_id: UUID, file: DownloadFile, conn: Db, user: CurrentUser) -> DownloadLink:
+    _user_job(conn, job_id, user)  # ownership check before handing out a link
     return DownloadLink(
         url=f"{API_PUBLIC_URL}/jobs/{job_id}/files/{file}",
         expires_at=db.utcnow() + timedelta(minutes=5),  # not enforced locally
     )
 
 
+# Serves one of the user's output files as an attachment (stand-in for S3).
 @router.get("/jobs/{job_id}/files/{file}")
-def download_file(job_id: UUID, file: DownloadFile, conn: Db) -> FileResponse:
-    row = _job_row(conn, job_id)
+def download_file(job_id: UUID, file: DownloadFile, conn: Db, user: CurrentUser) -> FileResponse:
+    row = _user_job(conn, job_id, user)
     key = row["output_key"] if file == "video" else row["transcript_key"]
     if key and file == "srt":
         key = PurePath(key).with_suffix(".srt").as_posix()  # the worker writes it beside the JSON
