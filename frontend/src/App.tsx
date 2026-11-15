@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
-import { getCurrentUser, logOut } from './auth/authApi.ts'
+import { getCurrentUser, logIn, logOut, signUp } from './auth/authApi.ts'
 import type { User } from './api/types.ts'
-import type { AuthMode } from './auth/authApi.ts'
-import AuthDialog from './components/AuthDialog.tsx'
 import TopBar from './components/TopBar.tsx'
 import { tabFromHash } from './config/navigation.ts'
 import type { TabId } from './config/navigation.ts'
@@ -14,8 +12,6 @@ function App() {
     tabFromHash(window.location.hash),
   )
   const [user, setUser] = useState<User | null>(null)
-  // Which auth dialog is open, or null when it's closed.
-  const [authMode, setAuthMode] = useState<AuthMode | null>(null)
 
   useEffect(() => {
     function handleHashChange() {
@@ -40,17 +36,9 @@ function App() {
     }
   }, [])
 
-  function handleAuthenticated(authenticatedUser: User) {
-    setUser(authenticatedUser)
-    setAuthMode(null)
-  }
-
+  // On success the page navigates to Cognito's logout; on failure just show the app as logged out.
   function handleLogOut() {
-    logOut()
-      .catch(() => {
-        // Clear the local session even if the request fails.
-      })
-      .finally(() => setUser(null))
+    logOut().catch(() => setUser(null))
   }
 
   return (
@@ -58,24 +46,12 @@ function App() {
       <TopBar
         activeTab={activeTab}
         user={user}
-        onLogIn={() => setAuthMode('logIn')}
-        onSignUp={() => setAuthMode('signUp')}
+        onLogIn={logIn}
+        onSignUp={signUp}
         onLogOut={handleLogOut}
       />
 
-      {activeTab === 'encode' ? (
-        <UploadPage />
-      ) : (
-        <LibraryPage user={user} onLogIn={() => setAuthMode('logIn')} />
-      )}
-
-      {authMode && (
-        <AuthDialog
-          initialMode={authMode}
-          onClose={() => setAuthMode(null)}
-          onAuthenticated={handleAuthenticated}
-        />
-      )}
+      {activeTab === 'encode' ? <UploadPage /> : <LibraryPage user={user} onLogIn={logIn} />}
     </>
   )
 }
