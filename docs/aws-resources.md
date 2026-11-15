@@ -1,6 +1,6 @@
 # AWS resources
 
-The project's S3 bucket and SQS queues: what exists, how code should use them, and every setting with the reason for it. This is the single source of truth. If you change something in the console, update this file in the same PR.
+The project's S3 bucket, SQS queues and Cognito user pool: what exists, how code should use them, and every setting with the reason for it. This is the single source of truth. If you change something in the console, update this file in the same PR.
 
 ## Quick info
 
@@ -11,6 +11,7 @@ The project's S3 bucket and SQS queues: what exists, how code should use them, a
 | Bucket | `transcoding-titans-media-850870347029-us-east-1-an` |
 | Job queue | `https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs` |
 | Dead-letter queue | `arn:aws:sqs:us-east-1:850870347029:transcoding-titans-jobs-dlq` |
+| User pool | `us-east-1_ykiHRApQj` ("User pool - 5roma9"), app client `transcoding-titans-web` (`36eotca2knemj5q1sddj7suvhl`), login at `https://us-east-1ykihrapqj.auth.us-east-1.amazoncognito.com` |
 | Naming | Every resource starts with `transcoding-titans-`. IAM only allows that prefix. |
 | Tag | `Project = TranscodingTitans` on everything. The exact value is required to create EC2, RDS and Cognito resources. |
 
@@ -38,6 +39,7 @@ In the console, switch to **US East (N. Virginia)**. Members don't have `s3:List
   - Call `ChangeMessageVisibility` every few minutes on long jobs, since the 1-hour timeout can run out on a 2-hour video.
   - Delete the message only after the outputs are uploaded.
 - **Retention** is handled by the lifecycle rules. Don't write cleanup code.
+- **Auth:** users sign in on Cognito's managed login page; our login form never sees a password. The API owns the whole OAuth flow (see [Cognito user pool](#cognito-user-pool)). Every endpoint gets the user from the session, and a job's owner is the user's Cognito `sub`.
 
 ## S3 bucket
 
@@ -135,6 +137,54 @@ Optional: a CloudWatch alarm on the DLQ when `ApproximateNumberOfMessagesVisible
 </details>
 
 To recreate a queue in the console: create the DLQ first, then the job queue pointing at it, then edit the DLQ to set its redrive allow policy.
+
+## Cognito user pool
+
+Created 2026-11-14 in the console and verified (every setting read back; the login page loads). Sign-up, sign-in, password reset and MFA all happen on Cognito's **managed login** pages, so passwords never reach our code. The API is a confidential OAuth client: it runs the authorization code flow with PKCE, `state` and `nonce`, then keeps its own session.
+
+**Login flow:**
+1. The browser opens `GET /auth/login` (or `/auth/signup`) on the API.
+2. The API redirects to managed login. It stores `state`, `nonce` and the PKCE verifier in a short-lived httpOnly cookie.
+3. Cognito redirects back to `GET /auth/callback`. The API checks `state`, exchanges the code using the client secret and PKCE verifier, and validates the ID token (signature via JWKS, `iss`, `aud`, `token_use`, `exp`, `nonce`).
+4. The API creates a server-side session (random ID, `sub` and email, 8-hour expiry) and sets an httpOnly, Secure, `SameSite=Lax` cookie. It then redirects to the frontend.
+5. **Logout:** the API deletes the session, clears the cookie and redirects to Cognito's `/logout`, which ends the managed login session too.
+
+The API discards Cognito's tokens after login; its own session is what counts. The flow cookies must be `SameSite=Lax`, not `Strict`, because the callback is a cross-site redirect from Cognito's domain.
+
+### Settings
+
+| Setting | Value | Why |
+|---|---|---|
+| Feature plan | Essentials (the default) | Required for managed login. Plus adds threat protection (compromised-password checks, adaptive MFA) at a per-user cost; optional upgrade. |
+| Sign-in identifier | Email, case-insensitive | Simple for users. **Can't be changed after creation.** |
+| Self-registration | On, email required and auto-verified | Anyone can sign up, but must prove they own the email. Email is the only attribute collected (minimal personal data). |
+| Email changes | Keep the old email active until the new one is verified | Stops an account being moved to an unverified address. |
+| Password policy | 12+ characters, upper, lower, number and symbol; the last 5 passwords can't be reused | Strong passwords. Cognito does the hashing and lockout. |
+| MFA | **Required**, authenticator app (TOTP) only | Protects accounts even if a password leaks. No SMS: it costs money and is open to SIM-swap attacks. Managed login walks users through setup. |
+| Account recovery | Verified email only | No SMS. |
+| Email sending | Cognito default | Free, about 50 emails/day; enough for class. Production would use SES. |
+| Deletion protection | Active | The pool can't be deleted by accident, which would delete every account. |
+| Domain | Cognito prefix `us-east-1ykihrapqj` (picked by the console), managed login (v2) with the default style | The hosted login and sign-up pages. |
+| App client | `transcoding-titans-web`, **with** a client secret | Confidential client: only the API ever holds the secret. It never goes in the frontend or git. |
+| OAuth | Authorization code grant only; scopes `openid email`; Cognito as the only identity provider | No implicit grant (it puts tokens in URLs). No `profile` or `aws.cognito.signin.user.admin` scopes (least privilege). |
+| Callback / sign-out URLs | `http://localhost:8000/auth/callback` / `http://localhost:5173/` | Must match exactly. Add the deployed `https://` URLs later. |
+| Auth flows | SRP and refresh only | Never `USER_PASSWORD_AUTH`/`ADMIN_USER_PASSWORD_AUTH`, which send raw passwords to the API. |
+| Prevent user existence errors | On | Login errors don't reveal whether an email is registered. |
+| Token validity | Access and ID tokens 60 min, refresh token 60 min (the minimum); token revocation on | The API only uses the ID token once at login, so short lifetimes limit any leak. |
+
+**How it was created:** with the console's "Set up resources for your application" wizard (Traditional web application, email sign-in, self-registration). The settings above were then applied in the console. Two things to know if you ever redo it:
+
+- **Tags:** the wizard can't add tags, and members can only manage pools tagged `Project=TranscodingTitans`. Root added the tag after creation.
+- **Managed login version:** the console couldn't switch the domain to managed login, because members lack `DescribeUserPoolDomain`. It was switched with `aws cognito-idp update-user-pool-domain --managed-login-version 2`.
+
+**API configuration**, in the repo root's `.env` (gitignored; never prefix these with `VITE_`). The IDs aren't secret. **The client secret is:** get it from App clients → `transcoding-titans-web` → Show client secret, or from a teammate privately. Never put it in chat or git. On AWS, read it from a secret store.
+
+```
+COGNITO_USER_POOL_ID=us-east-1_ykiHRApQj
+COGNITO_CLIENT_ID=36eotca2knemj5q1sddj7suvhl
+COGNITO_DOMAIN=https://us-east-1ykihrapqj.auth.us-east-1.amazoncognito.com
+COGNITO_CLIENT_SECRET=
+```
 
 ## App IAM roles (not created yet)
 
