@@ -1,40 +1,22 @@
-import { ApiError, apiFetch, notConnected } from '../api/client.ts'
-import type { Credentials, User } from '../api/types.ts'
-import { API_CONNECTED, API_ROUTES } from '../config/api.ts'
-import { mockLogIn, mockSignUp } from '../dev/mockApi.ts'
+import { ApiError, apiFetch } from '../api/client.ts'
+import type { LogoutResponse, User } from '../api/types.ts'
+import { API_BASE_URL, API_CONNECTED, API_ROUTES } from '../config/api.ts'
 
-/** Which form the auth dialog shows. UI-only; not part of the API contract. */
-export type AuthMode = 'logIn' | 'signUp'
-
-const NOT_CONNECTED_MESSAGE = "Accounts aren't available yet."
-
-export function signUp(credentials: Credentials): Promise<User> {
-  if (!API_CONNECTED.auth) {
-    return import.meta.env.DEV
-      ? mockSignUp(credentials)
-      : notConnected(NOT_CONNECTED_MESSAGE)
-  }
-  return apiFetch<User>(API_ROUTES.auth.signUp, {
-    method: 'POST',
-    body: JSON.stringify(credentials),
-  })
+// Login and sign-up happen on Cognito's pages, so these are full page navigations, not fetches.
+// The API redirects to Cognito, then back to the Library with a session cookie.
+export function logIn(): void {
+  window.location.assign(`${API_BASE_URL}${API_ROUTES.auth.logIn}`)
 }
 
-export function logIn(credentials: Credentials): Promise<User> {
-  if (!API_CONNECTED.auth) {
-    return import.meta.env.DEV
-      ? mockLogIn(credentials)
-      : notConnected(NOT_CONNECTED_MESSAGE)
-  }
-  return apiFetch<User>(API_ROUTES.auth.logIn, {
-    method: 'POST',
-    body: JSON.stringify(credentials),
-  })
+export function signUp(): void {
+  window.location.assign(`${API_BASE_URL}${API_ROUTES.auth.signUp}`)
 }
 
+// Ends the API session, then visits Cognito's logout page to end the Cognito login too.
 export async function logOut(): Promise<void> {
-  if (!API_CONNECTED.auth) return
-  await apiFetch<void>(API_ROUTES.auth.logOut, { method: 'POST' })
+  const { url } = await apiFetch<LogoutResponse>(API_ROUTES.auth.logOut, { method: 'POST' })
+  if (new URL(url).protocol !== 'https:') throw new Error('Unexpected logout URL.')
+  window.location.assign(url)
 }
 
 // Restores the session on page load. Resolves to null when nobody is logged in.

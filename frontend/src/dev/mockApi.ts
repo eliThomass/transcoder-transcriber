@@ -1,8 +1,8 @@
 // Dev-only fake API responses so the UI can be clicked through before the
 // backend exists. Only reached through `import.meta.env.DEV` branches, so
-// production builds drop this file. Any email and password "logs in".
+// production builds drop this file.
 
-import type { Credentials, Job, TranscodeSettings, User } from '../api/types.ts'
+import type { Job, TranscodeSettings } from '../api/types.ts'
 import { QUALITY_PRESETS } from '../config/transcodeOptions.ts'
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -15,13 +15,6 @@ function delay(ms: number) {
 function daysFromNow(days: number) {
   return new Date(Date.now() + days * DAY_MS).toISOString()
 }
-
-export async function mockLogIn({ email }: Credentials): Promise<User> {
-  await delay(400)
-  return { id: 'dev-user', email, createdAt: daysFromNow(-30) }
-}
-
-export const mockSignUp = mockLogIn
 
 export async function mockStartEncode(
   file: File,

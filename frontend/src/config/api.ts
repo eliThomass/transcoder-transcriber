@@ -7,7 +7,7 @@ export const API_BASE_URL: string =
 // its API functions return mock data in `npm run dev` (see src/dev/mockApi.ts)
 // and a "not available yet" error in production builds.
 export const API_CONNECTED: { auth: boolean; jobs: boolean } = {
-  auth: false, // no accounts yet; dev mode logs in with mock data
+  auth: true, // Cognito managed login through the API
   jobs: true, // covers /uploads and /jobs/*
 }
 
@@ -17,9 +17,9 @@ export const API_ROUTES = {
   health: '/health', // GET -> HealthResponse
 
   auth: {
-    signUp: '/auth/signup', // POST Credentials -> User (201), sets the session cookie
-    logIn: '/auth/login', // POST Credentials -> User, sets the session cookie
-    logOut: '/auth/logout', // POST -> 204, clears the session cookie
+    signUp: '/auth/signup', // page visit -> Cognito sign-up -> back to #/library with the session cookie
+    logIn: '/auth/login', // page visit -> Cognito login -> back to #/library with the session cookie
+    logOut: '/auth/logout', // POST -> LogoutResponse, clears the session cookie
     currentUser: '/auth/me', // GET -> User, or 401 when logged out
   },
 

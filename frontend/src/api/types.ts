@@ -43,20 +43,20 @@ export type HealthResponse = {
 
 // ---------------------------------------------------------------------------
 // Auth: /auth/*
-// The session lives in an httpOnly, Secure, SameSite cookie that the API sets
-// on login/signup. No token ever appears in a response body.
+// Login and sign-up happen on Cognito's managed login pages; the API sets an
+// httpOnly, Secure, SameSite cookie afterwards. No token or password ever
+// passes through the frontend.
 // ---------------------------------------------------------------------------
 
 export type User = {
-  id: Id
+  id: Id // the user's Cognito `sub`
   email: string
   createdAt: IsoDateTime
 }
 
-/** Body for POST /auth/login and POST /auth/signup. */
-export type Credentials = {
-  email: string
-  password: string
+/** Response for POST /auth/logout. */
+export type LogoutResponse = {
+  url: string // Cognito's logout page; visit it to end the Cognito login too
 }
 
 // ---------------------------------------------------------------------------

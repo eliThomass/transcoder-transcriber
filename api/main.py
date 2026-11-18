@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api import db, jobs
+from api import auth, db, jobs
 from api.config import CORS_ORIGINS
 from api.schemas import HealthResponse
 
@@ -26,9 +26,11 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
+app.include_router(auth.router)
 app.include_router(jobs.router)
 
 
+# Liveness check
 @app.get("/health")
 def health() -> HealthResponse:
     return HealthResponse()
