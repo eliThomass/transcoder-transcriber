@@ -1,6 +1,6 @@
 # AWS resources
 
-The project's S3 bucket, SQS queues and Cognito user pool: what exists, how code should use them, and every setting with the reason for it. This is the single source of truth. If you change something in the console, update this file in the same PR.
+The project's S3 bucket, SQS queues, Cognito user pool and planned database: what exists, how code should use them, and every setting with the reason for it. This is the single source of truth. If you change something in the console, update this file in the same PR.
 
 ## Quick info
 
@@ -11,6 +11,7 @@ The project's S3 bucket, SQS queues and Cognito user pool: what exists, how code
 | Bucket | `transcoding-titans-media-850870347029-us-east-1-an` |
 | Job queue | `https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs` |
 | Dead-letter queue | `arn:aws:sqs:us-east-1:850870347029:transcoding-titans-jobs-dlq` |
+| RDS | Not created yet; planned PostgreSQL instance in `us-east-1` |
 | User pool | `us-east-1_ykiHRApQj` ("User pool - 5roma9"), app client `transcoding-titans-web` (`36eotca2knemj5q1sddj7suvhl`), login at `https://us-east-1ykihrapqj.auth.us-east-1.amazoncognito.com` |
 | Naming | Every resource starts with `transcoding-titans-`. IAM only allows that prefix. |
 | Tag | `Project = TranscodingTitans` on everything. The exact value is required to create EC2, RDS and Cognito resources. |
@@ -22,8 +23,11 @@ Check access and settings (read-only; prints a `WARNING` for anything that doesn
 ```bash
 AWS_PROFILE=my-profile S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an \
   SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs \
+  RDS_DB_INSTANCE_IDENTIFIER=transcoding-titans-postgres \
   uv run python scripts/check_aws.py
 ```
+
+The optional `RDS_DB_INSTANCE_IDENTIFIER` makes the check read the instance's status and security properties through the RDS API. It does not attempt a PostgreSQL login; that requires an application credential and a network path to the database. Keep the database private and allow port 5432 only from the API/worker security group when those workloads run in AWS.
 
 In the console, switch to **US East (N. Virginia)**. Members don't have `s3:ListAllMyBuckets` or `sqs:ListQueues`, so lists may be empty or say "Access denied". Open resources by searching for their name.
 

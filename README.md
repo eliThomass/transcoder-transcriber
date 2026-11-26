@@ -41,7 +41,7 @@ The first transcript downloads the Whisper model. The default `medium.en` is abo
 
 ## AWS setup
 
-Only login uses AWS (Cognito) so far, but you can connect and check access to the bucket and queues now. Ask for an IAM user in the team account (`850870347029`) with the `SignInLocalDevelopmentAccess` policy. Don't use access keys or root.
+Login uses Cognito; S3 and SQS are configured for the migration. The read-only connectivity check can also inspect an RDS instance by identifier. Ask for an IAM user in the team account (`850870347029`) with the needed project permissions. Don't use root.
 
 In the commands below, replace **`my-profile`** with your own AWS CLI profile name, meaning whatever you pass to `aws login --profile`. `aws configure list-profiles` shows your profiles. If you signed in without `--profile`, use `default`.
 
@@ -58,6 +58,7 @@ macOS / Linux:
 ```bash
 AWS_PROFILE=my-profile S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an \
   SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs \
+  RDS_DB_INSTANCE_IDENTIFIER=transcoding-titans-postgres \
   uv run python scripts/check_aws.py
 ```
 
@@ -67,6 +68,7 @@ Windows (cmd). The `set` values last until you close the window:
 set AWS_PROFILE=my-profile
 set S3_BUCKET=transcoding-titans-media-850870347029-us-east-1-an
 set SQS_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs
+set RDS_DB_INSTANCE_IDENTIFIER=transcoding-titans-database
 uv run python scripts\check_aws.py
 ```
 
@@ -76,6 +78,7 @@ Windows (PowerShell). The `$env:` values last until you close the window:
 $env:AWS_PROFILE = "my-profile"
 $env:S3_BUCKET = "transcoding-titans-media-850870347029-us-east-1-an"
 $env:SQS_QUEUE_URL = "https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs"
+$env:RDS_DB_INSTANCE_IDENTIFIER = "transcoding-titans-database"
 uv run python scripts\check_aws.py
 ```
 
@@ -139,3 +142,7 @@ The API address defaults to `http://localhost:8000`. To change it, copy `fronten
 ### Dev-only extras
 
 In `npm run dev`, the Encode page shows the FFmpeg command your settings would produce, with a copy button. It and the mock API are left out of production builds.
+
+### For temporary login 
+
+aws login --profile cpsc454-session (then just chose the account and get temp cred)

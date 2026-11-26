@@ -1,7 +1,8 @@
 """Read-only AWS connectivity check: uv run python scripts/check_aws.py
 
 Uses the default boto3 credential chain (`aws login` / SSO profile); never put keys in code.
-Optional env vars: S3_BUCKET, SQS_QUEUE_URL (AWS_PROFILE / AWS_REGION pick the profile and region).
+Optional env vars: S3_BUCKET, SQS_QUEUE_URL, RDS_DB_INSTANCE_IDENTIFIER
+(AWS_PROFILE picks the profile; the profile's configured region or AWS_DEFAULT_REGION picks the region).
 Nothing is created or modified. Exits 1 if AWS can't be reached; security warnings don't fail it.
 """
 import os
@@ -86,6 +87,27 @@ def check_queue(session: boto3.Session, url: str) -> list[str]:
     return warnings
 
 
+def check_rds(session: boto3.Session, identifier: str) -> list[str]:
+    """Check the configured RDS instance through the AWS control plane (not a SQL login)."""
+    result = session.client("rds").describe_db_instances(DBInstanceIdentifier=identifier)
+    instances = result["DBInstances"]
+    if not instances:
+        raise RuntimeError(f"RDS instance {identifier} not found")
+    db = instances[0]
+    status = db["DBInstanceStatus"]
+    endpoint = db.get("Endpoint", {}).get("Address", "pending")
+    print(f"rds: {db['DBInstanceIdentifier']} ({db['Engine']}) status={status}, endpoint={endpoint}, "
+          f"encrypted={db.get('StorageEncrypted', False)}, public={db.get('PubliclyAccessible', False)}")
+    warnings = []
+    if status != "available":
+        warnings.append(f"RDS instance {identifier} is {status}, not available")
+    if not db.get("StorageEncrypted", False):
+        warnings.append(f"RDS instance {identifier} storage is not encrypted")
+    if db.get("PubliclyAccessible", False):
+        warnings.append(f"RDS instance {identifier} is publicly accessible; restrict access with its security group")
+    return warnings
+
+
 def main() -> int:
     session = boto3.Session()
     try:
@@ -98,6 +120,10 @@ def main() -> int:
             warnings += check_queue(session, queue_url)
         else:
             print("sqs: skipped (set SQS_QUEUE_URL)")
+        if db_identifier := os.environ.get("RDS_DB_INSTANCE_IDENTIFIER"):
+            warnings += check_rds(session, db_identifier)
+        else:
+            print("rds: skipped (set RDS_DB_INSTANCE_IDENTIFIER)")
     except (ClientError, BotoCoreError, RuntimeError) as e:
         print(f"FAILED: {e}", file=sys.stderr)
         return 1
