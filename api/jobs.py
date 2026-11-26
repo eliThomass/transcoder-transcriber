@@ -1,20 +1,18 @@
 import logging
 import re
-import shutil
 import sqlite3
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path, PurePath
 from typing import Annotated, Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
-from starlette.datastructures import UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 
-from api import db
+from api import db, storage
 from api.auth import CurrentUser
-from api.config import API_PUBLIC_URL, MAX_UPLOAD_BYTES, RETENTION_DAYS, STORAGE_DIR
+from api.config import MAX_UPLOAD_BYTES, RETENTION_DAYS
 from api.schemas import CreateJobRequest, CreateUploadRequest, DownloadLink, Job, TranscodeSettings, UploadTicket
 from worker.Ffmpeg_script import InvalidInput, probeVideo, runFfmpeg
 from worker.faster_whisper_script import run_faster_whisper
@@ -73,7 +71,39 @@ def _finish(conn: sqlite3.Connection, job_id: str, status: str, error: str | Non
         )
 
 
-# Runs on the background thread. On AWS this is the EC2 worker's job, fed by SQS.
+# Downloads the upload, encodes (and transcribes) it in a temp folder, then uploads the results to S3.
+# Returns (output_key, transcript_key, output size). This is the part that moves to the EC2 worker.
+def _encode(row: sqlite3.Row) -> tuple[str, str | None, int]:
+    settings = TranscodeSettings.model_validate_json(row["settings"])
+    prefix = f"outputs/{row['user_id']}/{row['id']}/"
+    with tempfile.TemporaryDirectory() as tmp:  # deleted afterwards, even on failure
+        src, out = Path(tmp) / "input.mp4", Path(tmp) / f"video_{settings.resolution}.mp4"
+        storage.download(row["input_key"], src)
+        has_audio = probeVideo(src)  # rejects anything that isn't a real MP4 video
+        runFfmpeg(
+            str(src), None, HEIGHTS[settings.resolution],
+            None if settings.frame_rate == "original" else settings.frame_rate,
+            VIDEO_ENCODERS[settings.video_codec], settings.encoding_speed, settings.quality,
+            AUDIO_ENCODERS[settings.audio_codec], AUDIO_BITRATE, outputFile=out, brightness=settings.brightness,
+        )
+        output_key, transcript_key = prefix + out.name, None
+        storage.upload(out, output_key, "video/mp4")
+        if row["transcribe"] and has_audio:
+            # Transcribes our own output, not the raw upload; writes video_<res>_transcript.json/.srt beside it.
+            json_file, srt_file = run_faster_whisper(str(out))
+            if json_file:
+                transcript_key = prefix + Path(json_file).name
+                storage.upload(json_file, transcript_key, "application/json")
+                storage.upload(srt_file, _srt_key(transcript_key), "application/x-subrip")
+        return output_key, transcript_key, out.stat().st_size
+
+
+# The SRT is stored beside the JSON transcript, so only the JSON key goes in the DB.
+def _srt_key(transcript_key: str) -> str:
+    return PurePath(transcript_key).with_suffix(".srt").as_posix()
+
+
+# Runs on the background thread: encodes a job and records the result. On AWS, SQS feeds this to EC2 workers.
 def process_job(job_id: str) -> None:
     conn = db.connect()
     try:
@@ -81,84 +111,33 @@ def process_job(job_id: str) -> None:
         with conn:
             conn.execute("UPDATE jobs SET status = 'processing', updated_at = ? WHERE id = ?",
                          (db.to_db(db.utcnow()), job_id))
-        settings = TranscodeSettings.model_validate_json(row["settings"])
-        src = STORAGE_DIR / row["input_key"]
-        output_key = f"outputs/{job_id}/video_{settings.resolution}.mp4"
-        out = STORAGE_DIR / output_key
-        out.parent.mkdir(parents=True, exist_ok=True)
         try:
-            has_audio = probeVideo(src)  # rejects anything that isn't a real MP4 video
-            runFfmpeg(
-                str(src), None, HEIGHTS[settings.resolution],
-                None if settings.frame_rate == "original" else settings.frame_rate,
-                VIDEO_ENCODERS[settings.video_codec], settings.encoding_speed, settings.quality,
-                AUDIO_ENCODERS[settings.audio_codec], AUDIO_BITRATE, outputFile=out, brightness=settings.brightness,
-            )
-            transcript_key = None
-            if row["transcribe"] and has_audio:
-                # Transcribes our own output, not the raw upload; writes video_<res>_transcript.json/.srt beside it.
-                json_file, _ = run_faster_whisper(str(out))
-                if json_file:
-                    transcript_key = Path(json_file).relative_to(STORAGE_DIR).as_posix()
-            _finish(conn, job_id, "ready", output_key=output_key, transcript_key=transcript_key,
-                    size=out.stat().st_size)
-        except Exception as e:
-            shutil.rmtree(out.parent, ignore_errors=True)  # don't keep partial outputs
-            if isinstance(e, InvalidInput):
-                _finish(conn, job_id, "failed", "This file couldn't be read as an MP4 video.")
-            else:
-                log.exception("job %s failed", job_id)
-                _finish(conn, job_id, "failed", "Encoding failed. Try again later.")
+            output_key, transcript_key, size = _encode(row)
+            _finish(conn, job_id, "ready", output_key=output_key, transcript_key=transcript_key, size=size)
+        except InvalidInput:
+            _finish(conn, job_id, "failed", "This file couldn't be read as an MP4 video.")
+        except Exception:  # partial outputs in S3 expire with the outputs/ lifecycle rule
+            log.exception("job %s failed", job_id)
+            _finish(conn, job_id, "failed", "Encoding failed. Try again later.")
     finally:
         conn.close()
 
 
-# Step 1 of encoding: reserve an upload. On AWS this returns a presigned S3 POST instead.
+# Step 1 of encoding: reserve an upload and return a presigned S3 POST for it.
 @router.post("/uploads", status_code=201)
 def create_upload(body: CreateUploadRequest, conn: Db, user: CurrentUser) -> UploadTicket:
     if body.size_bytes > MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"Videos can be at most {MAX_UPLOAD_BYTES // 1024**2} MB.")
     upload_id = uuid4()
-    key = f"uploads/{upload_id}.mp4"  # server-generated; the user's filename is display-only
+    key = f"uploads/{user['id']}/{upload_id}.mp4"  # server-generated; the user's filename is display-only
     with conn:
         conn.execute("INSERT INTO uploads (id, user_id, file_name, key) VALUES (?, ?, ?, ?)",
                      (str(upload_id), user["id"], body.file_name, key))
+    form = storage.upload_form(key)  # step 2: the browser posts the file straight to S3
     return UploadTicket(
-        upload_id=upload_id, url=f"{API_PUBLIC_URL}/uploads/{upload_id}/file", fields={},
-        max_size_bytes=MAX_UPLOAD_BYTES, expires_at=db.utcnow() + timedelta(minutes=15),
+        upload_id=upload_id, url=form["url"], fields=form["fields"], max_size_bytes=MAX_UPLOAD_BYTES,
+        expires_at=db.utcnow() + timedelta(seconds=storage.UPLOAD_URL_SECONDS),
     )
-
-
-# Step 2: the browser sends the file here (stand-in for uploading straight to S3).
-# No session check, like a presigned S3 POST: the random upload ID only its owner knows is the permission.
-@router.post("/uploads/{upload_id}/file", status_code=204)
-async def receive_upload(upload_id: UUID, request: Request, conn: Db) -> None:
-    # Reject oversized bodies before reading them (S3 enforces this with the POST policy).
-    length = request.headers.get("content-length", "")
-    if not length.isdigit() or int(length) > MAX_UPLOAD_BYTES + 64 * 1024:  # small allowance for form headers
-        raise HTTPException(413, "This file is larger than the upload limit.")
-    row = conn.execute("SELECT key FROM uploads WHERE id = ? AND received = 0", (str(upload_id),)).fetchone()
-    if not row:
-        raise HTTPException(404, "Upload not found or already received.")
-    dest = STORAGE_DIR / row["key"]
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    async with request.form(max_files=1) as form:
-        file = form.get("file")
-        if not isinstance(file, UploadFile):
-            raise HTTPException(400, "Missing file.")
-        size = 0
-        try:
-            with dest.open("wb") as out:
-                while chunk := await file.read(1024 * 1024):
-                    size += len(chunk)
-                    if size > MAX_UPLOAD_BYTES:  # don't trust the declared size either
-                        raise HTTPException(413, "This file is larger than the upload limit.")
-                    out.write(chunk)
-        except HTTPException:
-            dest.unlink(missing_ok=True)
-            raise
-    with conn:
-        conn.execute("UPDATE uploads SET received = 1 WHERE id = ?", (str(upload_id),))
 
 
 # Step 3: record the job and start it in the background.
@@ -168,7 +147,7 @@ def create_job(body: CreateJobRequest, conn: Db, user: CurrentUser) -> Job:
                           (str(body.upload_id), user["id"])).fetchone()
     if not upload:
         raise HTTPException(404, "Upload not found.")
-    if not upload["received"]:
+    if not storage.exists(upload["key"]):
         raise HTTPException(409, "The video hasn't finished uploading.")
     job_id, now = str(uuid4()), db.utcnow()
     try:
@@ -194,28 +173,22 @@ def list_jobs(conn: Db, user: CurrentUser) -> list[Job]:
     return [_job_from_row(row) for row in rows]
 
 
-# A download link for one of the user's jobs. On AWS this returns a short-lived presigned S3 GET URL instead.
+# A short-lived presigned S3 link to one of the user's output files.
 @router.get("/jobs/{job_id}/download")
 def get_download_link(job_id: UUID, file: DownloadFile, conn: Db, user: CurrentUser) -> DownloadLink:
-    _user_job(conn, job_id, user)  # ownership check before handing out a link
-    return DownloadLink(
-        url=f"{API_PUBLIC_URL}/jobs/{job_id}/files/{file}",
-        expires_at=db.utcnow() + timedelta(minutes=5),  # not enforced locally
-    )
-
-
-# Serves one of the user's output files as an attachment (stand-in for S3).
-@router.get("/jobs/{job_id}/files/{file}")
-def download_file(job_id: UUID, file: DownloadFile, conn: Db, user: CurrentUser) -> FileResponse:
-    row = _user_job(conn, job_id, user)
+    row = _user_job(conn, job_id, user)  # ownership check before signing anything
     key = row["output_key"] if file == "video" else row["transcript_key"]
     if key and file == "srt":
-        key = PurePath(key).with_suffix(".srt").as_posix()  # the worker writes it beside the JSON
-    # Jobs from before SRT support have no .srt on disk.
-    if row["status"] != "ready" or not key or not (STORAGE_DIR / key).is_file():
+        key = _srt_key(key)
+    expired = row["expires_at"] <= db.to_db(db.utcnow())  # lifecycle deletion can lag by a day
+    # Also missing for jobs from before S3.
+    if row["status"] != "ready" or not key or expired or not storage.exists(key):
         raise HTTPException(404, "File not available.")
     stem = re.sub(r"[^A-Za-z0-9._ -]", "_", PurePath(row["file_name"]).stem)[:100] or "video"  # safe filename
     resolution = TranscodeSettings.model_validate_json(row["settings"]).resolution
     filename = {"video": f"{stem}_{resolution}.mp4", "transcript": f"{stem}_transcript.json",
                 "srt": f"{stem}_{resolution}.srt"}[file]
-    return FileResponse(STORAGE_DIR / key, filename=filename, content_disposition_type="attachment")
+    return DownloadLink(
+        url=storage.download_url(key, filename),
+        expires_at=db.utcnow() + timedelta(seconds=storage.DOWNLOAD_URL_SECONDS),
+    )

@@ -223,3 +223,7 @@ __marimo__/
 
 # Node
 node_modules/
+
+# macOS Finder files and local test outputs
+.DS_Store
+EXAMPLE_*/
