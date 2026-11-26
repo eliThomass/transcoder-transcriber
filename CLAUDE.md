@@ -8,22 +8,24 @@ A web app for cloud video transcoding and transcription, built as a group projec
 
 **This is a cloud security course.** Security choices (IAM, least privilege, private buckets, input handling) are part of what is graded, not an afterthought. When you add AWS or upload code, prefer the secure option and say why.
 
-## Current state (basic local pipeline; AWS not wired yet)
+## Current state (Cognito login and S3 storage; SQS/workers/RDS not wired yet)
 
-This branch keeps only the essentials: upload a video, encode and transcribe it, save the results locally, list jobs and download them. A fuller version (auth, signed URLs, SQS-style queue and separate worker process, tests) is saved on the `feat/full-local-backend` branch. Check the code before assuming a piece exists.
+Cognito login, plus S3 for files: the browser uploads straight to S3 with a presigned POST, the API encodes and transcribes on a background thread and writes the results to S3, and downloads are presigned GET links. Job and user data are still in local SQLite. AWS resources (bucket, queues, user pool), team IAM limits and their settings are in `docs/aws-resources.md`. A fuller version (auth, signed URLs, SQS-style queue and separate worker process, tests) is saved on the `feat/full-local-backend` branch. Check the code before assuming a piece exists.
 
-- `api/`: FastAPI app. No auth yet, so every job is visible to everyone.
-  - `config.py`: env-driven settings (`DATA_DIR`, `MAX_UPLOAD_BYTES`, `CORS_ORIGINS`, ...).
-  - `db.py`: SQLite (`local_data/app.sqlite3`) with `uploads` and `jobs` tables.
+- `api/`: FastAPI app. Every route except `/health` and the login redirects needs a session, and users only see their own uploads and jobs (other users' jobs return 404).
+  - `auth.py`: Cognito managed login as a confidential OAuth client (code flow + PKCE, `state`, `nonce`, client secret). `/auth/callback` verifies the ID token (JWKS signature, `iss`, `aud`, `exp`, `token_use`, `nonce`, `email_verified`), then creates a server-side session: random ID in an httpOnly, Secure, `SameSite=Lax` cookie, only its SHA-256 stored, 8 h expiry. Cognito tokens are discarded. `current_user` / `CurrentUser` is the dependency routes use.
+  - `config.py`: env-driven settings (`DATA_DIR`, `S3_BUCKET`, `AWS_REGION`, `MAX_UPLOAD_BYTES`, `CORS_ORIGINS`, `COGNITO_*`, `FRONTEND_URL`, `COOKIE_SECURE`, ...). Loads the gitignored root `.env` (template: `.env.example`); the Cognito client secret lives only there.
+  - `storage.py`: every S3 call (boto3 default credential chain, SigV4). `upload_form` (presigned POST: exact key, `video/mp4`, 1 byte to `MAX_UPLOAD_BYTES`, 10 min), `download_url` (presigned GET, `attachment`, 5 min), `exists` (HEAD), `download`, `upload`.
+  - `db.py`: SQLite (`local_data/app.sqlite3`) with `users` (id = Cognito `sub`), `sessions`, `uploads` and `jobs` (both with `user_id`). `init_db` adds `user_id` to older databases; old ownerless rows stay hidden.
   - `schemas.py`: Pydantic mirror of the parts of `frontend/src/api/types.ts` in use. Keep the two in sync.
-  - `jobs.py`: `POST /uploads`, `POST /uploads/{id}/file` (stand-in for the browser's direct S3 upload), `POST /jobs`, `GET /jobs`, `GET /jobs/{id}/download` and `GET /jobs/{id}/files/{file}` (`file` is `video`, `transcript` or `srt`). Jobs run one at a time on a background thread inside the API.
-  - Files are saved under `local_data/storage/` using the planned S3 keys (`uploads/<uploadId>.mp4`, `outputs/<jobId>/video_<res>.mp4`, `outputs/<jobId>/video_<res>_transcript.json` and `.srt`). The DB stores only the JSON key; the SRT path is derived from it. The API maps setting keys to FFmpeg values (`HEIGHTS`, `VIDEO_ENCODERS`, ... in `jobs.py`) before calling the worker functions.
+  - `jobs.py`: `POST /uploads` (presigned POST), `POST /jobs` (409 until the object is in S3), `GET /jobs` and `GET /jobs/{id}/download?file=video|transcript|srt` (presigned GET after the ownership, `ready`, `expiresAt` and object-exists checks). Jobs run one at a time on a background thread inside the API. `_encode` (download to a temp dir, ffprobe, FFmpeg, Whisper, upload results) is the part that moves to the EC2 worker.
+  - S3 keys: `uploads/<userId>/<uploadId>.mp4`, `outputs/<userId>/<jobId>/video_<res>.mp4`, `…/video_<res>_transcript.json` and `.srt`. Lifecycle rules delete uploads after 1 day and outputs after 7. The DB stores only the JSON key; the SRT path is derived from it. The API maps setting keys to FFmpeg values (`HEIGHTS`, `VIDEO_ENCODERS`, ... in `jobs.py`) before calling the worker functions.
 - `worker/`: teammates' scripts, which the API calls directly. They're plain functions, ready to move to an EC2 worker. Keep their names and signatures; teammates own them.
   - `Ffmpeg_script.py` (Grmnca): `runFfmpeg(...)` takes raw FFmpeg values; `outputFile=None` falls back to the `videos_un/` → `videos_pro/` test folders. Also `probeVideo()` (ffprobe check: duration, frame size, audio). The command forces `-f mp4 -protocol_whitelist file`, caps output with `-t`, and strips metadata. The test call at the bottom runs only under `__main__`.
   - `faster_whisper_script.py` (Brian): `run_faster_whisper(video)` writes `<video>_transcript.json` (full text, timestamped segments, word count, speech rate) and `<video>_transcript.srt` (subtitles), and returns `(json_path, srt_path)`; both are `None` if there's no audio. `transcribe()` returns a one-shot generator, so it's turned into a list before both writers use it. The model (`WHISPER_MODEL`, default `medium.en`) is loaded once.
   - `converter.py`: an unfinished JSON → SRT converter, now superseded by `create_srt()` in `faster_whisper_script.py`. `videos_un/`, `videos_pro/` and `worker/*.mp4` are teammates' committed test files.
-- Not implemented yet: `/auth/*`, `GET /jobs/{id}`, `DELETE /jobs/{id}`, expiry cleanup and tests.
-- `frontend/`: React 19 + Vite + TypeScript. `App.tsx` renders a top bar (`components/TopBar.tsx`) with **Encode** and **Library** tabs and Log in / Sign up buttons, and opens `components/AuthDialog.tsx` (a native `<dialog>`) for login and signup. Tabs use the URL hash (`#/encode`, `#/library`; see `config/navigation.ts`), not a router library. The logged-in `user` state lives in `App.tsx`.
+- Not implemented yet: `GET /jobs/{id}`, `DELETE /jobs/{id}`, expiry cleanup and tests.
+- `frontend/`: React 19 + Vite + TypeScript. `App.tsx` renders a top bar (`components/TopBar.tsx`) with **Encode** and **Library** tabs and Log in / Sign up buttons, which navigate to the API's `/auth/login` / `/auth/signup` (Cognito's pages; the app never shows a password field). Tabs use the URL hash (`#/encode`, `#/library`; see `config/navigation.ts`), not a router library. The logged-in `user` state lives in `App.tsx`.
   - `src/pages/UploadPage.tsx` (Encode tab): MP4 file picker, Low/Medium/High/Custom preset, and dropdowns for each FFmpeg option. Submit calls `startEncode()` (see below). The file picker is a 16:9 "monitor" drop zone (click or drag-and-drop) with SMPTE color bars.
   - `src/pages/LibraryPage.tsx` (Library tab): when logged out, a prompt to log in. When logged in, the user's jobs with status (queued / processing / ready / failed), expiry, and buttons to download the video, the transcript (JSON) and subtitles (SRT).
   - Styling is plain CSS with BEM-style class names (`upload-form__section`, `field__label`, ...). `src/styles/global.css` holds the design tokens (CSS variables), base styles, and the shared `.page`, `.button` and `.field` styles. Each page or component imports its own stylesheet next to it (e.g. `UploadPage.css`). The look: cool grey "paper", graphite ink, a single blue accent (`--accent`) and the Archivo variable font from Google Fonts, which uses `font-stretch` for width. Avoid generic template looks (cards with shadows, gradients, all-caps labels).
@@ -43,10 +45,10 @@ All backend calls go through a small layer, so pages and components never call `
 - `src/api/types.ts`: **the API contract.** Every request and response type, plus the worker message types. The Pydantic models must mirror it; the conventions are at the top of the file.
 - `src/api/client.ts`: `apiFetch()` sends JSON with `credentials: 'include'` and turns FastAPI `{ "detail": ... }` errors into `ApiError`.
 - `src/api/health.ts`: `checkHealth`.
-- `src/auth/authApi.ts`: `signUp`, `logIn`, `logOut` and `getCurrentUser`.
-- `src/jobs/jobsApi.ts`: `createUpload`, `uploadToS3`, `createJob`, `startEncode` (runs those three in order), `listJobs`, `getJob`, `deleteJob` and `getDownloadLink`. `getDownloadLink` rejects any URL that isn't `https:` before the page navigates to it (dev builds also allow `http://localhost` for the local API).
+- `src/auth/authApi.ts`: `logIn` and `signUp` (page navigations to the API), `logOut` (POST, then visits the returned Cognito logout URL, `https:` only) and `getCurrentUser`.
+- `src/jobs/jobsApi.ts`: `createUpload`, `uploadToS3`, `createJob`, `startEncode` (runs those three in order), `listJobs`, `getJob`, `deleteJob` and `getDownloadLink`. `getDownloadLink` rejects any URL that isn't `https:` before the page navigates to it.
 
-While a flag in `API_CONNECTED` is false, its functions return mock data from `src/dev/mockApi.ts` in `npm run dev` (any email and password logs in) and a "not available yet" error in production builds. To connect a feature:
+While a flag in `API_CONNECTED` is false, its functions return mock data from `src/dev/mockApi.ts` in `npm run dev` and a "not available yet" error in production builds. To connect a feature:
 
 1. Build the FastAPI endpoints to match `API_ROUTES` and the TypeScript types.
 2. Flip the flag to `true`.
@@ -61,14 +63,15 @@ Backend contract notes:
 
 ### API contract
 
-Types are in `frontend/src/api/types.ts`; paths are in `frontend/src/config/api.ts`. Every endpoint except `/health` and signup/login requires the session cookie and acts only on the logged-in user's own data. The user id always comes from the session, never from the request.
+Types are in `frontend/src/api/types.ts`; paths are in `frontend/src/config/api.ts`. Every endpoint except `/health`, `/auth/login`, `/auth/signup` and `/auth/callback` requires the session cookie and acts only on the logged-in user's own data. The user id always comes from the session, never from the request.
 
 | Method | Path | Request | Response |
 |---|---|---|---|
 | GET | `/health` | | `HealthResponse` |
-| POST | `/auth/signup` | `Credentials` | `User` (201) + session cookie |
-| POST | `/auth/login` | `Credentials` | `User` + session cookie |
-| POST | `/auth/logout` | | 204, clears cookie |
+| GET | `/auth/login` | page visit | 303 to Cognito managed login |
+| GET | `/auth/signup` | page visit | 303 to Cognito sign-up |
+| GET | `/auth/callback` | `code`, `state` from Cognito | 303 to the frontend's `#/library` + session cookie |
+| POST | `/auth/logout` | | `LogoutResponse` (Cognito logout URL), clears cookie |
 | GET | `/auth/me` | | `User`, or 401 |
 | POST | `/uploads` | `CreateUploadRequest` | `UploadTicket` (201): presigned S3 POST |
 | POST | `/jobs` | `CreateJobRequest` | `Job` (202) |
@@ -144,7 +147,7 @@ The storage backend for job/user metadata (DynamoDB, RDS, etc.) has not been cho
 
 ### AWS conventions and security rules
 
-- **Never commit AWS credentials** or `.env` files (`.env` is already gitignored). Developers authenticate with IAM Identity Center / `aws sso login` profiles. Code should rely on the default boto3 credential chain and never hard-code keys.
+- **Never commit AWS credentials** or `.env` files (`.env` is already gitignored). Developers use their own IAM user in the team account (`850870347029`) via `aws login --profile <name>` (temporary credentials; see the README). Code should rely on the default boto3 credential chain and never hard-code keys.
 - **Workers use an IAM role (EC2 instance profile)**, never access keys. Each role follows least privilege and is scoped to specific ARNs and prefixes. For example, a worker may `s3:GetObject` on `uploads/*`, `s3:PutObject` on `outputs/*`, and receive/delete messages on one queue only.
 - **S3 stays private.** Block Public Access stays on. Users reach objects only through **short-lived presigned URLs** generated by the API. Do not use public object URLs or `public-read` ACLs.
 - **Retention** ("store for some time") should use S3 lifecycle expiration rules, not cron cleanup code.
@@ -176,7 +179,6 @@ Ask rather than assume on these:
 
 - Which input containers are accepted: MP4 only, or MKV, MOV and others?
 - How vertical and odd-aspect videos should be handled in renditions.
-- Where job and user metadata live, and how users authenticate. The team floated storing user login info in S3. Push back on that: S3 is object storage, not a user database. It has no atomic "is this email taken" check and no per-record access control, and it would mean hand-rolling password hashing. Prefer **Amazon Cognito** (it handles password hashing, MFA and lockout). Failing that, use DynamoDB with passwords hashed by argon2 or bcrypt. S3 remains the right place for the videos themselves.
-- Whether the project uses a single shared AWS account with IAM Identity Center users/groups (leaning this way, since it avoids cross-account permissions) or three accounts under an AWS Organization.
+- Where job and user metadata live once the API and workers are on AWS (SQLite is local-only). The team IAM policy already allows RDS. Never store user logins in S3: authentication is decided (**Cognito**, managed login).
 - Whether workers are always-on EC2, auto-scaled on queue depth, or launched per job by the API.
 - Optional features: thumbnails (first frame, random frame, or preview clip) and output format conversion.

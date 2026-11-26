@@ -20,8 +20,7 @@ CREATE TABLE IF NOT EXISTS uploads (
     id TEXT PRIMARY KEY,
     user_id TEXT REFERENCES users(id),
     file_name TEXT NOT NULL,
-    key TEXT NOT NULL,
-    received INTEGER NOT NULL DEFAULT 0
+    key TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,

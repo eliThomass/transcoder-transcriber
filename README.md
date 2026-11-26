@@ -3,13 +3,13 @@ A cloud transcoder for videos that features transcribing capabilities. Built for
 
 ## What works now
 
-Login uses Amazon Cognito; everything else (storage, encoding, transcription) still runs locally.
+Login uses Amazon Cognito and files are stored in S3; encoding and transcription still run inside the API.
 
 1. On the **Encode** tab, pick an MP4, choose settings, and optionally ask for a transcript.
-2. The API saves the upload, encodes it with FFmpeg, and transcribes it with faster-whisper.
+2. The browser uploads the video straight to S3; the API then encodes it with FFmpeg, transcribes it with faster-whisper, and saves the results to S3.
 3. The **Library** tab lists your jobs (queued, processing, ready or failed) with buttons to download the encoded video, the transcript (JSON with the full text and timestamped segments) and subtitles (SRT).
 
-Uploaded videos, encoded outputs and transcripts are saved in `local_data/storage/`, and job info is in `local_data/app.sqlite3` (both gitignored).
+Uploads are deleted after 1 day and results after 7. Job info is in `local_data/app.sqlite3` (gitignored).
 
 You must log in to encode or see jobs, and each user only sees their own. Login happens on Cognito's pages, so the app never handles passwords; see [docs/aws-resources.md](docs/aws-resources.md).
 
@@ -21,7 +21,8 @@ Terminal 1, from the project root (API at http://localhost:8000, docs at http://
 
 ```bash
 uv sync
-cp .env.example .env    # then paste the Cognito client secret into .env 
+cp .env.example .env    # then paste the Cognito client secret and set AWS_PROFILE in .env
+aws login --profile my-profile   # S3 needs a current AWS login (see AWS setup)
 uv run uvicorn api.main:app --reload --reload-dir api --reload-dir worker
 ```
 

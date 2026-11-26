@@ -6,16 +6,19 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(ROOT / ".env")  # local secrets like the Cognito client secret; .env is gitignored
 
-# Everything is stored locally under DATA_DIR (gitignored) until S3 is wired up.
+# The SQLite database lives under DATA_DIR (gitignored) until it moves to RDS.
 DATA_DIR = Path(os.environ.get("DATA_DIR", ROOT / "local_data"))
 DB_PATH = DATA_DIR / "app.sqlite3"
-STORAGE_DIR = DATA_DIR / "storage"  # stand-in for the S3 bucket; paths mirror S3 keys
+
+# Videos, outputs and transcripts live in S3 (see docs/aws-resources.md).
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 API_PUBLIC_URL = os.environ.get("API_PUBLIC_URL", "http://localhost:8000")
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 500 * 1024 * 1024))
-RETENTION_DAYS = 7  # shown as "Expires in N days"; local files aren't auto-deleted yet
+RETENTION_DAYS = 7  # matches the bucket's outputs/ lifecycle rule
 
 # Login: Cognito managed login (see docs/aws-resources.md). The secret must only ever live on the API.
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:5173")

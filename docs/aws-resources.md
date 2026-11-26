@@ -30,7 +30,7 @@ In the console, switch to **US East (N. Virginia)**. Members don't have `s3:List
 ## Rules for code
 
 - **Credentials:** use the default boto3 chain. Locally that's your `aws login` profile; on AWS it's an IAM role. Never use access keys. The worker's EC2 role must be named `transcoding-titans-ec2-worker-role`, the only role members can pass to EC2.
-- **Object keys:** `uploads/<uploadId>.mp4` for raw uploads, and `outputs/<jobId>/video_<res>.mp4`, `…_transcript.json`, `…_transcript.srt` for results. These match `local_data/storage/` today.
+- **Object keys:** `uploads/<userId>/<uploadId>.mp4` for raw uploads, and `outputs/<userId>/<jobId>/video_<res>.mp4`, `…_transcript.json`, `…_transcript.srt` for results. `userId` is the Cognito `sub`. All S3 calls are in `api/storage.py`.
 - **Uploads:** the browser POSTs straight to S3 with a presigned POST. Its conditions must enforce the exact key, `Content-Type: video/mp4`, and `content-length-range` up to `MAX_UPLOAD_BYTES`. The bucket can't enforce these itself.
 - **Downloads:** presigned GET URLs only. Refuse to sign once a job is past `expiresAt`, because lifecycle deletion can lag by up to a day.
 - **Workers:**
@@ -191,7 +191,7 @@ COGNITO_CLIENT_SECRET=
 Least-privilege policies for when the API and workers run on AWS. How workers report results back is still undecided, so that isn't included.
 
 <details>
-<summary>API role: presign uploads/downloads, delete job files, enqueue jobs</summary>
+<summary>API role: presign uploads/downloads, check objects exist, delete job files, enqueue jobs</summary>
 
 ```json
 {
@@ -199,8 +199,11 @@ Least-privilege policies for when the API and workers run on AWS. How workers re
   "Statement": [
     { "Sid": "PresignUploads", "Effect": "Allow", "Action": "s3:PutObject",
       "Resource": "arn:aws:s3:::transcoding-titans-media-850870347029-us-east-1-an/uploads/*" },
-    { "Sid": "PresignDownloads", "Effect": "Allow", "Action": "s3:GetObject",
-      "Resource": "arn:aws:s3:::transcoding-titans-media-850870347029-us-east-1-an/outputs/*" },
+    { "Sid": "PresignDownloadsAndHead", "Effect": "Allow", "Action": "s3:GetObject",
+      "Resource": [
+        "arn:aws:s3:::transcoding-titans-media-850870347029-us-east-1-an/uploads/*",
+        "arn:aws:s3:::transcoding-titans-media-850870347029-us-east-1-an/outputs/*"
+      ] },
     { "Sid": "DeleteJobFiles", "Effect": "Allow", "Action": "s3:DeleteObject",
       "Resource": [
         "arn:aws:s3:::transcoding-titans-media-850870347029-us-east-1-an/uploads/*",
