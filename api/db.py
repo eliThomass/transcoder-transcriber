@@ -67,11 +67,6 @@ def init_db() -> None:
         for table in ("uploads", "jobs"):  # fixed names, not user input
             if "user_id" not in {col["name"] for col in conn.execute(f"PRAGMA table_info({table})")}:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT")  # old rows stay ownerless and hidden
-        # Jobs run in this process, so any left mid-run by a restart will never finish.
-        conn.execute(
-            "UPDATE jobs SET status = 'failed', error = 'Encoding was interrupted. Try again.' "
-            "WHERE status IN ('queued', 'processing')"
-        )
 
 
 # FastAPI dependency: one connection per request.

@@ -3,10 +3,10 @@ A cloud transcoder for videos that features transcribing capabilities. Built for
 
 ## What works now
 
-Login uses Amazon Cognito and files are stored in S3; encoding and transcription still run inside the API.
+Login uses Amazon Cognito, files are stored in S3, and jobs go through SQS to a separate worker process (run locally for now; EC2 next).
 
 1. On the **Encode** tab, pick an MP4, choose settings, and optionally ask for a transcript.
-2. The browser uploads the video straight to S3; the API then encodes it with FFmpeg, transcribes it with faster-whisper, and saves the results to S3.
+2. The browser uploads the video straight to S3, and the API puts a job on SQS. A worker picks it up, encodes it with FFmpeg, transcribes it with faster-whisper, saves the results to S3, and reports back to the API on a results queue.
 3. The **Library** tab lists your jobs (queued, processing, ready or failed) with buttons to download the encoded video, the transcript (JSON with the full text and timestamped segments) and subtitles (SRT).
 
 Uploads are deleted after 1 day and results after 7. Job info is in `local_data/app.sqlite3` (gitignored).
@@ -22,13 +22,17 @@ Terminal 1, from the project root (API at http://localhost:8000, docs at http://
 ```bash
 uv sync
 cp .env.example .env    # then paste the Cognito client secret and set AWS_PROFILE in .env
-aws login --profile my-profile   # S3 needs a current AWS login (see AWS setup)
-uv run uvicorn api.main:app --reload --reload-dir api --reload-dir worker
+aws login --profile my-profile   # S3 and SQS need a current AWS login (see AWS setup)
+uv run uvicorn api.main:app --reload --reload-dir api
 ```
 
-Use this command, not `fastapi dev`: that one also watches `.venv/`, and a restart kills any running job.
+Terminal 2, from the project root (the worker; restart it after changing worker code):
 
-Terminal 2:
+```bash
+WHISPER_MODEL=base uv run python -m worker.main
+```
+
+Terminal 3:
 
 ```bash
 cd frontend
@@ -36,13 +40,13 @@ npm install
 npm run dev     # http://localhost:5173
 ```
 
-Then open http://localhost:5173, click **Sign up** (you'll need an authenticator app for MFA), encode a video, and find it in the Library. The Library doesn't refresh on its own, so reload it to see a job's status change.
+Then open http://localhost:5173, click **Sign up** (you'll need an authenticator app for MFA), encode a video, and find it in the Library. The Library checks every 5 seconds while a job is running, so the download buttons appear on their own.
 
-The first transcript downloads the Whisper model. The default `medium.en` is about 1.5 GB and slow on a CPU; for quicker local runs prefix the API command with `WHISPER_MODEL=base` (or `tiny`).
+The first transcript downloads the Whisper model. The default `medium.en` is about 1.5 GB and slow on a CPU; `WHISPER_MODEL=base` (or `tiny`) on the worker command keeps local runs quick.
 
 ## AWS setup
 
-Only login uses AWS (Cognito) so far, but you can connect and check access to the bucket and queues now. Ask for an IAM user in the team account (`850870347029`) with the `SignInLocalDevelopmentAccess` policy. Don't use access keys or root.
+The app uses Cognito, S3 and SQS, so you need an AWS login to run it. Ask for an IAM user in the team account (`850870347029`) with the `SignInLocalDevelopmentAccess` policy. Don't use access keys or root.
 
 In the commands below, replace **`my-profile`** with your own AWS CLI profile name, meaning whatever you pass to `aws login --profile`. `aws configure list-profiles` shows your profiles. If you signed in without `--profile`, use `default`.
 
@@ -88,17 +92,20 @@ Sessions last up to 12 hours; run `aws login --profile my-profile` again after t
 api/
   main.py                  FastAPI app, CORS, /health
   auth.py                  Cognito login (/auth/*), session cookies, current_user
-  jobs.py                  upload, job, list and download routes; runs jobs one at a time on a background thread
+  jobs.py                  upload, job, list and download routes
+  storage.py               S3: presigned upload/download URLs, existence checks
+  queues.py                SQS: sends jobs to workers, applies their reports (background thread)
   db.py                    SQLite tables for users, sessions, uploads and jobs
   schemas.py               request/response models (mirror frontend/src/api/types.ts)
   config.py                settings, overridable with env vars
 worker/
+  main.py                  the worker: polls SQS, encodes/transcribes, uploads to S3, reports back
   Ffmpeg_script.py         runFfmpeg() encodes a video; probeVideo() checks an upload first
   faster_whisper_script.py run_faster_whisper() writes a JSON transcript and SRT subtitles
   converter.py             old JSON -> SRT converter (superseded)
 ```
 
-The API maps the frontend's setting keys (e.g. `'720p'`, `'h264'`) to FFmpeg values from its own whitelist, then calls the worker functions. Later, these functions move to EC2 workers fed by SQS, and `local_data/` is replaced by S3.
+The worker maps the setting keys (e.g. `'720p'`, `'h264'`) to FFmpeg values from its own whitelist before calling the scripts. It never touches the database; only the API does.
 
 To test the FFmpeg script on its own, put a video in `videos_un/` and run `uv run python worker/Ffmpeg_script.py` (output goes to `videos_pro/`).
 

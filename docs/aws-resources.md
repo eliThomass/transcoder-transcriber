@@ -11,6 +11,7 @@ The project's S3 bucket, SQS queues and Cognito user pool: what exists, how code
 | Bucket | `transcoding-titans-media-850870347029-us-east-1-an` |
 | Job queue | `https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-jobs` |
 | Dead-letter queue | `arn:aws:sqs:us-east-1:850870347029:transcoding-titans-jobs-dlq` |
+| Results queue | `https://sqs.us-east-1.amazonaws.com/850870347029/transcoding-titans-results` (workers → API) |
 | User pool | `us-east-1_ykiHRApQj` ("User pool - 5roma9"), app client `transcoding-titans-web` (`36eotca2knemj5q1sddj7suvhl`), login at `https://us-east-1ykihrapqj.auth.us-east-1.amazoncognito.com` |
 | Naming | Every resource starts with `transcoding-titans-`. IAM only allows that prefix. |
 | Tag | `Project = TranscodingTitans` on everything. The exact value is required to create EC2, RDS and Cognito resources. |
@@ -33,11 +34,12 @@ In the console, switch to **US East (N. Virginia)**. Members don't have `s3:List
 - **Object keys:** `uploads/<userId>/<uploadId>.mp4` for raw uploads, and `outputs/<userId>/<jobId>/video_<res>.mp4`, `…_transcript.json`, `…_transcript.srt` for results. `userId` is the Cognito `sub`. All S3 calls are in `api/storage.py`.
 - **Uploads:** the browser POSTs straight to S3 with a presigned POST. Its conditions must enforce the exact key, `Content-Type: video/mp4`, and `content-length-range` up to `MAX_UPLOAD_BYTES`. The bucket can't enforce these itself.
 - **Downloads:** presigned GET URLs only. Refuse to sign once a job is past `expiresAt`, because lifecycle deletion can lag by up to a day.
-- **Workers:**
-  - Long-poll with `WaitTimeSeconds=20`.
-  - **Be idempotent**: a standard queue can deliver the same `jobId` twice.
-  - Call `ChangeMessageVisibility` every few minutes on long jobs, since the 1-hour timeout can run out on a 2-hour video.
-  - Delete the message only after the outputs are uploaded.
+- **Workers** (`worker/main.py`):
+  - Long-poll with `WaitTimeSeconds=20`, one job at a time.
+  - **Idempotent**: a standard queue can deliver the same `jobId` twice. A repeat run writes the same keys, and the API ignores results for finished jobs.
+  - Extend the message's visibility every 10 minutes while a job runs, since the 1-hour timeout can run out on a 2-hour video.
+  - Report `started` and the result on the results queue, then delete the job message. Malformed job messages are left alone so they land in the DLQ.
+  - **No database access.** Workers handle untrusted video, so they only get S3 and SQS. The API applies their reports, only moves jobs forward, and rejects result keys outside the job's `outputs/<userId>/<jobId>/` folder.
 - **Retention** is handled by the lifecycle rules. Don't write cleanup code.
 - **Auth:** users sign in on Cognito's managed login page; our login form never sees a password. The API owns the whole OAuth flow (see [Cognito user pool](#cognito-user-pool)). Every endpoint gets the user from the session, and a job's owner is the user's Cognito `sub`.
 
@@ -105,6 +107,8 @@ Both are **standard** queues with SSE-SQS encryption, 20 s long polling, no deli
 | Dead-letter queue | DLQ after **3** receives | n/a | Stop retrying a job that keeps failing. |
 | Redrive allow policy | n/a | Only `transcoding-titans-jobs` | Other queues can't use our DLQ. |
 | Access policy | Owner account + deny non-TLS | Same | Each user or role still needs its own IAM permission; no other account gets access. |
+
+**`transcoding-titans-results`** (workers → API) is also standard, SSE-SQS, 20 s long polling and the same access policy. Visibility timeout **60 s** (the API applies a report in milliseconds), retention **4 days** (reports wait out an API outage over a weekend), **no DLQ** (the API drops malformed reports itself; a failed database write is retried).
 
 Optional: a CloudWatch alarm on the DLQ when `ApproximateNumberOfMessagesVisible >= 1`.
 
@@ -188,10 +192,10 @@ COGNITO_CLIENT_SECRET=
 
 ## App IAM roles (not created yet)
 
-Least-privilege policies for when the API and workers run on AWS. How workers report results back is still undecided, so that isn't included.
+Least-privilege policies for when the API and workers run on AWS.
 
 <details>
-<summary>API role: presign uploads/downloads, check objects exist, delete job files, enqueue jobs</summary>
+<summary>API role: presign uploads/downloads, check objects exist, delete job files, enqueue jobs, read worker reports</summary>
 
 ```json
 {
@@ -210,7 +214,9 @@ Least-privilege policies for when the API and workers run on AWS. How workers re
         "arn:aws:s3:::transcoding-titans-media-850870347029-us-east-1-an/outputs/*"
       ] },
     { "Sid": "EnqueueJobs", "Effect": "Allow", "Action": "sqs:SendMessage",
-      "Resource": "arn:aws:sqs:us-east-1:850870347029:transcoding-titans-jobs" }
+      "Resource": "arn:aws:sqs:us-east-1:850870347029:transcoding-titans-jobs" },
+    { "Sid": "ReadReports", "Effect": "Allow", "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage"],
+      "Resource": "arn:aws:sqs:us-east-1:850870347029:transcoding-titans-results" }
   ]
 }
 ```
@@ -218,7 +224,7 @@ Least-privilege policies for when the API and workers run on AWS. How workers re
 </details>
 
 <details>
-<summary>Worker role (<code>transcoding-titans-ec2-worker-role</code>): read uploads, write outputs, process the queue</summary>
+<summary>Worker role (<code>transcoding-titans-ec2-worker-role</code>): read uploads, write outputs, process the queue, send reports</summary>
 
 ```json
 {
@@ -231,7 +237,9 @@ Least-privilege policies for when the API and workers run on AWS. How workers re
       "Resource": "arn:aws:s3:::transcoding-titans-media-850870347029-us-east-1-an/outputs/*" },
     { "Sid": "ProcessJobs", "Effect": "Allow",
       "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility"],
-      "Resource": "arn:aws:sqs:us-east-1:850870347029:transcoding-titans-jobs" }
+      "Resource": "arn:aws:sqs:us-east-1:850870347029:transcoding-titans-jobs" },
+    { "Sid": "SendReports", "Effect": "Allow", "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-1:850870347029:transcoding-titans-results" }
   ]
 }
 ```

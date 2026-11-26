@@ -8,26 +8,28 @@ A web app for cloud video transcoding and transcription, built as a group projec
 
 **This is a cloud security course.** Security choices (IAM, least privilege, private buckets, input handling) are part of what is graded, not an afterthought. When you add AWS or upload code, prefer the secure option and say why.
 
-## Current state (Cognito login and S3 storage; SQS/workers/RDS not wired yet)
+## Current state (Cognito, S3 and SQS with a local worker process; EC2 and RDS not wired yet)
 
-Cognito login, plus S3 for files: the browser uploads straight to S3 with a presigned POST, the API encodes and transcribes on a background thread and writes the results to S3, and downloads are presigned GET links. Job and user data are still in local SQLite. AWS resources (bucket, queues, user pool), team IAM limits and their settings are in `docs/aws-resources.md`. A fuller version (auth, signed URLs, SQS-style queue and separate worker process, tests) is saved on the `feat/full-local-backend` branch. Check the code before assuming a piece exists.
+Cognito login, S3 for files and SQS for jobs: the browser uploads straight to S3 with a presigned POST, `POST /jobs` puts a `WorkerJobMessage` on the job queue, a separate worker process (`worker/main.py`, run locally for now) encodes and transcribes and writes the results to S3, then reports back on a results queue that the API applies. Downloads are presigned GET links. Job and user data are still in local SQLite; the RDS Postgres instance `transcoding-titans-database` exists but isn't used yet. AWS resources (bucket, queues, user pool), team IAM limits and their settings are in `docs/aws-resources.md`. A fuller version (auth, signed URLs, SQS-style queue and separate worker process, tests) is saved on the `feat/full-local-backend` branch. Check the code before assuming a piece exists.
 
 - `api/`: FastAPI app. Every route except `/health` and the login redirects needs a session, and users only see their own uploads and jobs (other users' jobs return 404).
   - `auth.py`: Cognito managed login as a confidential OAuth client (code flow + PKCE, `state`, `nonce`, client secret). `/auth/callback` verifies the ID token (JWKS signature, `iss`, `aud`, `exp`, `token_use`, `nonce`, `email_verified`), then creates a server-side session: random ID in an httpOnly, Secure, `SameSite=Lax` cookie, only its SHA-256 stored, 8 h expiry. Cognito tokens are discarded. `current_user` / `CurrentUser` is the dependency routes use.
-  - `config.py`: env-driven settings (`DATA_DIR`, `S3_BUCKET`, `AWS_REGION`, `MAX_UPLOAD_BYTES`, `CORS_ORIGINS`, `COGNITO_*`, `FRONTEND_URL`, `COOKIE_SECURE`, ...). Loads the gitignored root `.env` (template: `.env.example`); the Cognito client secret lives only there.
-  - `storage.py`: every S3 call (boto3 default credential chain, SigV4). `upload_form` (presigned POST: exact key, `video/mp4`, 1 byte to `MAX_UPLOAD_BYTES`, 10 min), `download_url` (presigned GET, `attachment`, 5 min), `exists` (HEAD), `download`, `upload`.
+  - `config.py`: env-driven settings (`DATA_DIR`, `S3_BUCKET`, `AWS_REGION`, `SQS_QUEUE_URL`, `SQS_RESULTS_URL`, `MAX_UPLOAD_BYTES`, `CORS_ORIGINS`, `COGNITO_*`, `FRONTEND_URL`, `COOKIE_SECURE`, ...). Loads the gitignored root `.env` (template: `.env.example`); the Cognito client secret lives only there.
+  - `storage.py`: every S3 call (boto3 default credential chain, SigV4). `upload_form` (presigned POST: exact key, `video/mp4`, 1 byte to `MAX_UPLOAD_BYTES`, 10 min), `download_url` (presigned GET, `attachment`, 5 min), `exists` (HEAD).
+  - `queues.py`: `send_job` (job queue) and `consume_reports`, a background thread started in `main.py`'s lifespan that long-polls the results queue. `apply_report` only moves jobs forward (queued → processing → ready/failed), so duplicate or out-of-order reports are harmless; it rejects result keys outside `output_prefix(userId, jobId)` and maps worker error codes to user text (`USER_ERRORS`). Malformed reports are dropped.
   - `db.py`: SQLite (`local_data/app.sqlite3`) with `users` (id = Cognito `sub`), `sessions`, `uploads` and `jobs` (both with `user_id`). `init_db` adds `user_id` to older databases; old ownerless rows stay hidden.
   - `schemas.py`: Pydantic mirror of the parts of `frontend/src/api/types.ts` in use. Keep the two in sync.
-  - `jobs.py`: `POST /uploads` (presigned POST), `POST /jobs` (409 until the object is in S3), `GET /jobs` and `GET /jobs/{id}/download?file=video|transcript|srt` (presigned GET after the ownership, `ready`, `expiresAt` and object-exists checks). Jobs run one at a time on a background thread inside the API. `_encode` (download to a temp dir, ffprobe, FFmpeg, Whisper, upload results) is the part that moves to the EC2 worker.
-  - S3 keys: `uploads/<userId>/<uploadId>.mp4`, `outputs/<userId>/<jobId>/video_<res>.mp4`, `…/video_<res>_transcript.json` and `.srt`. Lifecycle rules delete uploads after 1 day and outputs after 7. The DB stores only the JSON key; the SRT path is derived from it. The API maps setting keys to FFmpeg values (`HEIGHTS`, `VIDEO_ENCODERS`, ... in `jobs.py`) before calling the worker functions.
-- `worker/`: teammates' scripts, which the API calls directly. They're plain functions, ready to move to an EC2 worker. Keep their names and signatures; teammates own them.
+  - `jobs.py`: `POST /uploads` (presigned POST), `POST /jobs` (409 until the object is in S3; enqueues the job, and deletes it again with a 503 if SQS fails), `GET /jobs` and `GET /jobs/{id}/download?file=video|transcript|srt` (presigned GET after the ownership, `ready`, `expiresAt` and object-exists checks).
+  - S3 keys: `uploads/<userId>/<uploadId>.mp4`, `outputs/<userId>/<jobId>/video_<res>.mp4`, `…/video_<res>_transcript.json` and `.srt`. Lifecycle rules delete uploads after 1 day and outputs after 7. The DB stores only the JSON key; the SRT path is derived from it.
+- `worker/`: the worker process plus teammates' scripts. Keep the scripts' names and signatures; teammates own them.
+  - `main.py`: `uv run python -m worker.main`. Long-polls the job queue one job at a time, validates the message (`WorkerJobMessage`), reports `started`, downloads the upload to a temp dir, runs `probeVideo`, `runFfmpeg` and `run_faster_whisper`, uploads the results, reports the result, then deletes the message. A heartbeat thread extends the message's visibility every 10 min. Errors become a `failed` report with a code (`invalid_input` / `encode_failed`); only a crash leaves the message for redelivery. Malformed messages are left for the DLQ. Bucket and queue URLs come from env vars (root `.env` locally). It maps setting keys to FFmpeg values (`HEIGHTS`, `VIDEO_ENCODERS`, ...) and never touches the database. It imports only `api.schemas` from the API.
   - `Ffmpeg_script.py` (Grmnca): `runFfmpeg(...)` takes raw FFmpeg values; `outputFile=None` falls back to the `videos_un/` → `videos_pro/` test folders. Also `probeVideo()` (ffprobe check: duration, frame size, audio). The command forces `-f mp4 -protocol_whitelist file`, caps output with `-t`, and strips metadata. The test call at the bottom runs only under `__main__`.
   - `faster_whisper_script.py` (Brian): `run_faster_whisper(video)` writes `<video>_transcript.json` (full text, timestamped segments, word count, speech rate) and `<video>_transcript.srt` (subtitles), and returns `(json_path, srt_path)`; both are `None` if there's no audio. `transcribe()` returns a one-shot generator, so it's turned into a list before both writers use it. The model (`WHISPER_MODEL`, default `medium.en`) is loaded once.
   - `converter.py`: an unfinished JSON → SRT converter, now superseded by `create_srt()` in `faster_whisper_script.py`. `videos_un/`, `videos_pro/` and `worker/*.mp4` are teammates' committed test files.
 - Not implemented yet: `GET /jobs/{id}`, `DELETE /jobs/{id}`, expiry cleanup and tests.
 - `frontend/`: React 19 + Vite + TypeScript. `App.tsx` renders a top bar (`components/TopBar.tsx`) with **Encode** and **Library** tabs and Log in / Sign up buttons, which navigate to the API's `/auth/login` / `/auth/signup` (Cognito's pages; the app never shows a password field). Tabs use the URL hash (`#/encode`, `#/library`; see `config/navigation.ts`), not a router library. The logged-in `user` state lives in `App.tsx`.
   - `src/pages/UploadPage.tsx` (Encode tab): MP4 file picker, Low/Medium/High/Custom preset, and dropdowns for each FFmpeg option. Submit calls `startEncode()` (see below). The file picker is a 16:9 "monitor" drop zone (click or drag-and-drop) with SMPTE color bars.
-  - `src/pages/LibraryPage.tsx` (Library tab): when logged out, a prompt to log in. When logged in, the user's jobs with status (queued / processing / ready / failed), expiry, and buttons to download the video, the transcript (JSON) and subtitles (SRT).
+  - `src/pages/LibraryPage.tsx` (Library tab): when logged out, a prompt to log in. When logged in, the user's jobs with status (queued / processing / ready / failed; re-fetched every 5 s while any job is queued or processing, paused while the tab is hidden), expiry, and buttons to download the video, the transcript (JSON) and subtitles (SRT).
   - Styling is plain CSS with BEM-style class names (`upload-form__section`, `field__label`, ...). `src/styles/global.css` holds the design tokens (CSS variables), base styles, and the shared `.page`, `.button` and `.field` styles. Each page or component imports its own stylesheet next to it (e.g. `UploadPage.css`). The look: cool grey "paper", graphite ink, a single blue accent (`--accent`) and the Archivo variable font from Google Fonts, which uses `font-stretch` for width. Avoid generic template looks (cards with shadows, gradients, all-caps labels).
   - `src/config/transcodeOptions.ts` defines every dropdown's options, the `TranscodeSettings` type and the preset values. Option values are short keys (`'h264'`, `'720p'`), not FFmpeg flags. The API must map them to arguments from its own whitelist.
   - `src/components/SelectField.tsx` is the reusable labelled `<select>`.
@@ -92,7 +94,7 @@ Worker messages:
 
 - **`WorkerJobMessage`** (API → SQS → worker) carries everything a worker needs: `jobId`, `userId`, `inputKey`, `outputPrefix`, `settings`, `transcribe`, and `schemaVersion` for future changes.
 - **The bucket and queue names come from the worker's environment, not the message**, so a forged message can't point a worker at another bucket.
-- **`WorkerJobStarted` and `WorkerJobResult`** are what a worker reports back. Whether that goes through a direct DynamoDB update or a result queue is still open.
+- **`WorkerJobStarted` and `WorkerJobResult`** (tagged by `type`) are what a worker reports back on the results queue (`transcoding-titans-results`). Workers never get database access, so a compromised worker can only touch S3 and SQS.
 
 ## Commands
 
@@ -100,12 +102,13 @@ Python backend (run from the repo root; uses **uv**):
 
 ```bash
 uv sync                                   # install deps into .venv
-uv run uvicorn api.main:app --reload --reload-dir api --reload-dir worker   # dev server at http://localhost:8000
+uv run uvicorn api.main:app --reload --reload-dir api   # dev server at http://localhost:8000
+WHISPER_MODEL=base uv run python -m worker.main          # worker (restart after code changes)
 uv add <pkg>                              # add a dependency (updates pyproject.toml + uv.lock)
 uv export --format requirements-txt > requirements.txt   # regenerate after dep changes
 ```
 
-Don't use `fastapi dev` for testing jobs. It watches the whole repo, including `.venv/`, so any change there (`uv sync`, or a sync tool such as iCloud touching files) restarts the server. Jobs run inside the API process, so a restart kills the running job, and on startup it is marked "Encoding was interrupted". The `--reload-dir` flags limit reloads to our code. Prefix with `WHISPER_MODEL=base` for faster local transcription (the default `medium.en` is ~1.5 GB and slow on CPU).
+`--reload-dir api` keeps reloads to our code (`fastapi dev` also watches `.venv/`). Jobs run in the worker, so API restarts no longer interrupt them. Both need a current `aws login`. `WHISPER_MODEL=base` makes local transcription faster (the default `medium.en` is ~1.5 GB and slow on CPU).
 
 `requirements.txt` is generated by `uv export`. Do not edit it by hand. Regenerate it whenever `pyproject.toml` changes so that pip users stay in sync.
 
@@ -143,7 +146,7 @@ Example SQS job message:
 { "jobId": "abc123", "inputKey": "uploads/video123.mp4", "outputs": ["1080p", "720p", "480p"] }
 ```
 
-The storage backend for job/user metadata (DynamoDB, RDS, etc.) has not been chosen.
+Job and user metadata will move to RDS PostgreSQL (`transcoding-titans-database`); only the API connects to it.
 
 ### AWS conventions and security rules
 

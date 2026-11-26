@@ -1,6 +1,4 @@
 """S3 access for the API."""
-from pathlib import Path
-
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
@@ -43,12 +41,3 @@ def exists(key: str) -> bool:
             return False
         raise
 
-
-# Copies an object to a local file.
-def download(key: str, path: Path) -> None:
-    _s3.download_file(S3_BUCKET, key, str(path))
-
-
-# Uploads a local file with its content type.
-def upload(path: Path | str, key: str, content_type: str) -> None:
-    _s3.upload_file(str(path), S3_BUCKET, key, ExtraArgs={"ContentType": content_type})
