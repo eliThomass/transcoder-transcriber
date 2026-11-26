@@ -51,6 +51,8 @@ const STATUS_LABELS = {
   failed: 'Encoding failed',
 } as const
 
+const POLL_INTERVAL_MS = 5000
+
 function LibraryList() {
   const [state, setState] = useState<LoadState>({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
@@ -69,6 +71,32 @@ function LibraryList() {
       ignore = true
     }
   }, [attempt])
+
+  // While a job is queued or processing, re-check every few seconds; stops once all are done.
+  const hasActiveJobs =
+    state.status === 'ready' &&
+    state.jobs.some((job) => job.status === 'queued' || job.status === 'processing')
+
+  useEffect(() => {
+    if (!hasActiveJobs) return
+    let ignore = false
+    // Skipped while the tab is hidden; checks right away when the user comes back.
+    function refresh() {
+      if (document.hidden) return
+      listJobs()
+        .then((jobs) => {
+          if (!ignore) setState({ status: 'ready', jobs })
+        })
+        .catch(() => {}) // keep showing the current list; the next tick retries
+    }
+    const timer = window.setInterval(refresh, POLL_INTERVAL_MS)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      ignore = true
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [hasActiveJobs])
 
   function handleRetry() {
     setState({ status: 'loading' })

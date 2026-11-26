@@ -14,6 +14,10 @@ DB_PATH = DATA_DIR / "app.sqlite3"
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
+# Jobs go to the EC2 workers on SQS_QUEUE_URL; they report back on SQS_RESULTS_URL.
+SQS_QUEUE_URL = os.environ.get("SQS_QUEUE_URL", "")
+SQS_RESULTS_URL = os.environ.get("SQS_RESULTS_URL", "")
+
 API_PUBLIC_URL = os.environ.get("API_PUBLIC_URL", "http://localhost:8000")
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
 

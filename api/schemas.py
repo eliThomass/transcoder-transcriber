@@ -1,6 +1,6 @@
 # Pydantic mirror of frontend/src/api/types.ts. Keep the two in sync.
-from datetime import datetime
-from typing import Literal
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -76,3 +76,39 @@ class Job(Model):
 class DownloadLink(Model):
     url: str
     expires_at: datetime
+
+
+# Worker contract (API -> SQS -> worker, and back on the results queue). Backend only.
+class WorkerJobMessage(Model):
+    schema_version: Literal[1] = 1
+    job_id: UUID
+    user_id: str
+    input_key: str
+    output_prefix: str
+    settings: TranscodeSettings
+    transcribe: bool
+    requested_at: datetime
+
+
+class WorkerJobStarted(Model):
+    type: Literal["started"] = "started"
+    schema_version: Literal[1] = 1
+    job_id: UUID
+    worker_id: str
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class WorkerJobResult(Model):
+    type: Literal["result"] = "result"
+    schema_version: Literal[1] = 1
+    job_id: UUID
+    status: Literal["ready", "failed"]
+    output_key: str | None = None
+    transcript_key: str | None = None
+    output_size_bytes: int | None = None
+    error: Literal["invalid_input", "encode_failed"] | None = None  # a code; the API picks the user-facing text
+    finished_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+# What workers send on the results queue; `type` says which one it is.
+WorkerReport = Annotated[WorkerJobStarted | WorkerJobResult, Field(discriminator="type")]
